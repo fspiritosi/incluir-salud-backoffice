@@ -32,6 +32,7 @@ export function BeneficiarioForm({ initialData, isEditing = false }: Beneficiari
   const { toast } = useToast();
   const supabase = createClient();
   const [loading, setLoading] = useState(false);
+  const [addrVersion, setAddrVersion] = useState(0);
 
   const normalizedInitialData: Partial<BeneficiarioFormValues> | undefined = initialData
     ? {
@@ -59,6 +60,16 @@ export function BeneficiarioForm({ initialData, isEditing = false }: Beneficiari
       ...(normalizedInitialData ?? {}),
     },
   });
+
+  useEffect(() => {
+    const dir = (form.getValues('direccion_completa') || '').trim();
+    const city = (form.getValues('ciudad') || '').trim();
+    const prov = (form.getValues('provincia') || '').trim();
+    const cp = (form.getValues('codigo_postal') || '').trim();
+    if (dir && city && prov && cp) {
+      setAddrVersion((v) => v + 1);
+    }
+  }, [form.watch('direccion_completa'), form.watch('ciudad'), form.watch('provincia'), form.watch('codigo_postal')]);
 
   const onSubmit = async (values: BeneficiarioFormValues) => {
     try {
@@ -273,6 +284,7 @@ export function BeneficiarioForm({ initialData, isEditing = false }: Beneficiari
               form.watch('codigo_postal'),
               'Argentina',
             ].filter(Boolean).join(', ')}
+            geocodeVersion={addrVersion}
           />
         </FormControl>
         <FormMessage />

@@ -12,17 +12,20 @@ interface MapboxLocationPickerProps {
   initialLocation?: { lng: number; lat: number } | null;
   onLocationSelect: (location: { lng: number; lat: number } | null) => void;
   address?: string;
+  geocodeVersion?: number; // optional trigger counter
 }
 
 export function MapboxLocationPicker({ 
   initialLocation = { lng: -64.1888, lat: -31.4201 },
   onLocationSelect,
-  address = '' 
+  address = '',
+  geocodeVersion,
 }: MapboxLocationPickerProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const marker = useRef<mapboxgl.Marker | null>(null);
   const [loading, setLoading] = useState(true);
+  const lastGeocodeVersion = useRef<number | null>(null);
 
   // Efecto para inicializar el mapa
   useEffect(() => {
@@ -65,9 +68,13 @@ export function MapboxLocationPicker({
         if (marker.current) {
           marker.current.setLngLat([lng, lat]);
         } else if (map.current) {
-          marker.current = new mapboxgl.Marker()
+          marker.current = new mapboxgl.Marker({ draggable: true })
             .setLngLat([lng, lat])
             .addTo(map.current);
+          marker.current.on('dragend', () => {
+            const pos = marker.current!.getLngLat();
+            onLocationSelect({ lng: pos.lng, lat: pos.lat });
+          });
         }
       };
 
@@ -89,6 +96,10 @@ export function MapboxLocationPicker({
         if (map.current) {
           console.log('Cleaning up map...');
           map.current.off('click', handleMapClick);
+          if (marker.current) {
+            marker.current.remove();
+            marker.current = null;
+          }
           map.current.remove();
           map.current = null;
         }
@@ -102,6 +113,13 @@ export function MapboxLocationPicker({
   // Efecto para actualizar el mapa cuando cambia la dirección
   useEffect(() => {
     if (!map.current) return;
+
+    // If a version trigger is provided, only geocode on version change
+    if (typeof geocodeVersion === 'number') {
+      if (geocodeVersion === lastGeocodeVersion.current) return;
+      lastGeocodeVersion.current = geocodeVersion;
+    }
+
     const trimmed = (address || '').trim();
     if (!trimmed || trimmed.length < 5) return;
 
@@ -123,9 +141,13 @@ export function MapboxLocationPicker({
             if (marker.current) {
               marker.current.setLngLat([lng, lat]);
             } else if (map.current) {
-              marker.current = new mapboxgl.Marker()
+              marker.current = new mapboxgl.Marker({ draggable: true })
                 .setLngLat([lng, lat])
                 .addTo(map.current);
+              marker.current.on('dragend', () => {
+                const pos = marker.current!.getLngLat();
+                onLocationSelect({ lng: pos.lng, lat: pos.lat });
+              });
             }
 
             onLocationSelect({ lng, lat });
@@ -138,7 +160,7 @@ export function MapboxLocationPicker({
 
     const timeoutId = setTimeout(geocodeAddress, 1000);
     return () => clearTimeout(timeoutId);
-  }, [address, onLocationSelect]);
+  }, [address, onLocationSelect, geocodeVersion]);
 
   // Efecto para la ubicación inicial
   useEffect(() => {
@@ -151,9 +173,13 @@ export function MapboxLocationPicker({
       if (marker.current) {
         marker.current.setLngLat([initialLocation.lng, initialLocation.lat]);
       } else if (map.current) {
-        marker.current = new mapboxgl.Marker()
+        marker.current = new mapboxgl.Marker({ draggable: true })
           .setLngLat([initialLocation.lng, initialLocation.lat])
           .addTo(map.current);
+        marker.current.on('dragend', () => {
+          const pos = marker.current!.getLngLat();
+          onLocationSelect({ lng: pos.lng, lat: pos.lat });
+        });
       }
     }
   }, [initialLocation]);
