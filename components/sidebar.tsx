@@ -16,6 +16,11 @@ export function Sidebar() {
       icon: LayoutDashboard,
     },
     {
+      name: 'Beneficiarios',
+      href: '/protected/beneficiarios',
+      icon: Users,
+    },
+    {
       name: 'Crear Beneficiario',
       href: '/protected/beneficiarios/crear',
       icon: UserPlus,
