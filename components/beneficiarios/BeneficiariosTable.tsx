@@ -4,6 +4,9 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useRouter } from "next/navigation";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Pencil, UserX, RotateCcw } from "lucide-react";
 
 type Paciente = {
   id: string;
@@ -21,12 +24,16 @@ interface BeneficiariosTableProps {
 }
 
 export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
+  const router = useRouter();
   const [fNombre, setFNombre] = useState("");
   const [fApellido, setFApellido] = useState("");
   const [fDocumento, setFDocumento] = useState("");
   const [fCiudad, setFCiudad] = useState("");
   const [fProvincia, setFProvincia] = useState("");
   const [fActivo, setFActivo] = useState<"todos" | "si" | "no">("todos");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [targetRow, setTargetRow] = useState<Paciente | null>(null);
 
   const filtered = useMemo(() => {
     return data.filter((row) => {
@@ -40,6 +47,24 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
       return byNombre && byApellido && byDocumento && byCiudad && byProvincia && byActivo;
     });
   }, [data, fNombre, fApellido, fDocumento, fCiudad, fProvincia, fActivo]);
+
+  const toggleActivo = async (row: Paciente) => {
+    try {
+      setBusyId(row.id);
+      const res = await fetch(`/api/beneficiarios/${row.id}/estado`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activo: !row.activo }),
+      });
+      if (!res.ok) {
+        // Opcional: mostrar toast si existe en este ámbito
+        console.error("No se pudo cambiar el estado");
+      }
+      router.refresh();
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -85,9 +110,34 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
                 <td className="p-3">{row.provincia}</td>
                 <td className="p-3">{row.activo ? "Sí" : "No"}</td>
                 <td className="p-3">
-                  <Link href={`/protected/beneficiarios/editar/${row.id}`}>
-                    <Button size="sm" variant="outline">Editar</Button>
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    <Link href={`/protected/beneficiarios/editar/${row.id}`} aria-label="Editar">
+                      <Button size="icon" variant="outline">
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                    </Link>
+                    {row.activo ? (
+                      <Button
+                        size="icon"
+                        variant="destructive"
+                        aria-label="Baja"
+                        disabled={busyId === row.id}
+                        onClick={() => { setTargetRow(row); setConfirmOpen(true); }}
+                      >
+                        <UserX className="h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <Button
+                        size="icon"
+                        variant="default"
+                        aria-label="Re-activar"
+                        disabled={busyId === row.id}
+                        onClick={() => toggleActivo(row)}
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -101,6 +151,29 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
           </tbody>
         </table>
       </div>
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar baja</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">¿Realmente desea dar de baja este beneficiario?</p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)}>Cancelar</Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                if (targetRow) {
+                  await toggleActivo(targetRow);
+                }
+                setConfirmOpen(false);
+                setTargetRow(null);
+              }}
+            >
+              Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

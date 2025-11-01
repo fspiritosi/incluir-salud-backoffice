@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { BeneficiarioForm } from "@/components/forms/beneficiario-form";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { getBeneficiarioById } from "@/app/protected/beneficiarios/actions";
 
 export default async function EditarBeneficiarioPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -25,11 +26,7 @@ export default async function EditarBeneficiarioPage({ params }: { params: Promi
     );
   }
 
-  const { data, error } = await supabase
-    .from("pacientes")
-    .select("id, nombre, apellido, documento, telefono, email, direccion_completa, ciudad, provincia, codigo_postal, activo, ubicacion")
-    .eq("id", id)
-    .single();
+  const { data, error } = await getBeneficiarioById(id);
 
   if (error || !data) {
     return (
@@ -57,3 +54,4 @@ export default async function EditarBeneficiarioPage({ params }: { params: Promi
     </div>
   );
 }
+

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { BeneficiariosTable } from "@/components/beneficiarios/BeneficiariosTable";
 import { Button } from "@/components/ui/button";
+import { listBeneficiarios } from "@/app/protected/beneficiarios/actions";
 
 export default async function BeneficiariosPage() {
   const supabase = await createClient();
@@ -12,10 +13,7 @@ export default async function BeneficiariosPage() {
     redirect("/auth/login");
   }
 
-  const { data: pacientes, error } = await supabase
-    .from("pacientes")
-    .select("id, nombre, apellido, documento, direccion_completa, ciudad, provincia, activo")
-    .order("apellido", { ascending: true });
+  const { data: pacientes, error } = await listBeneficiarios();
 
   if (error) {
     return (
@@ -38,3 +36,4 @@ export default async function BeneficiariosPage() {
     </div>
   );
 }
+

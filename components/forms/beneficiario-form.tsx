@@ -4,7 +4,6 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { BeneficiarioFormValues, beneficiarioFormSchema } from '@/lib/validations/beneficiario';
-import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,8 +19,9 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { MapboxLocationPicker } from '@/components/map/MapboxLocationPicker';
+
 interface BeneficiarioFormProps {
   initialData?: any;
   isEditing?: boolean;
@@ -30,18 +30,88 @@ interface BeneficiarioFormProps {
 export function BeneficiarioForm({ initialData, isEditing = false }: BeneficiarioFormProps) {
   const router = useRouter();
   const { toast } = useToast();
-  const supabase = createClient();
   const [loading, setLoading] = useState(false);
   const [addrVersion, setAddrVersion] = useState(0);
+
+  const toLngLat = (val: any): { lng: number; lat: number } | null => {
+    console.log('toLngLat input:', val, 'Type:', typeof val);
+    
+    if (!val) {
+      console.log('toLngLat: null/undefined input');
+      return null;
+    }
+    
+    // Already in shape {lng, lat}
+    if (typeof val.lng !== 'undefined' && typeof val.lat !== 'undefined') {
+      const lng = Number(val.lng);
+      const lat = Number(val.lat);
+      console.log('toLngLat: Found lng/lat format:', { lng, lat });
+      return Number.isFinite(lng) && Number.isFinite(lat) ? { lng, lat } : null;
+    }
+    
+    // GeoJSON Point {type: "Point", coordinates:[lng,lat]}
+    if (val.type === 'Point' && Array.isArray(val.coordinates) && val.coordinates.length >= 2) {
+      const lng = Number(val.coordinates[0]);
+      const lat = Number(val.coordinates[1]);
+      console.log('toLngLat: Found GeoJSON Point:', { lng, lat });
+      return Number.isFinite(lng) && Number.isFinite(lat) ? { lng, lat } : null;
+    }
+    
+    // GeoJSON {coordinates:[lng,lat]} (without type)
+    if (Array.isArray(val.coordinates) && val.coordinates.length >= 2) {
+      const lng = Number(val.coordinates[0]);
+      const lat = Number(val.coordinates[1]);
+      console.log('toLngLat: Found coordinates array:', { lng, lat });
+      return Number.isFinite(lng) && Number.isFinite(lat) ? { lng, lat } : null;
+    }
+    
+    // Raw array [lng,lat]
+    if (Array.isArray(val) && val.length >= 2) {
+      const lng = Number(val[0]);
+      const lat = Number(val[1]);
+      console.log('toLngLat: Found raw array:', { lng, lat });
+      return Number.isFinite(lng) && Number.isFinite(lat) ? { lng, lat } : null;
+    }
+    
+    // { x: lng, y: lat }
+    if (typeof val.x !== 'undefined' && typeof val.y !== 'undefined') {
+      const lng = Number(val.x);
+      const lat = Number(val.y);
+      console.log('toLngLat: Found x/y format:', { lng, lat });
+      return Number.isFinite(lng) && Number.isFinite(lat) ? { lng, lat } : null;
+    }
+    
+    // EWKT/WKT string: "SRID=4326;POINT(lng lat)" or "POINT(lng lat)"
+    if (typeof val === 'string') {
+      const match = val.match(/POINT\s*\(([-\d\.]+)\s+([-\d\.]+)\)/i);
+      if (match) {
+        const lng = parseFloat(match[1]);
+        const lat = parseFloat(match[2]);
+        console.log('toLngLat: Parsed EWKT/WKT string:', { lng, lat });
+        return Number.isFinite(lng) && Number.isFinite(lat) ? { lng, lat } : null;
+      }
+    }
+    
+    console.warn('toLngLat: Could not parse format:', val);
+    return null;
+  };
 
   const normalizedInitialData: Partial<BeneficiarioFormValues> | undefined = initialData
     ? {
         ...initialData,
-        ubicacion: initialData.ubicacion && initialData.ubicacion.coordinates
-          ? { lng: initialData.ubicacion.coordinates[0], lat: initialData.ubicacion.coordinates[1] }
-          : initialData.ubicacion ?? null,
+        ubicacion: toLngLat(initialData.ubicacion),
       }
     : undefined;
+
+  // Debug: inspect incoming location
+  if (typeof window !== 'undefined') {
+    // eslint-disable-next-line no-console
+    console.log('BeneficiarioForm: initial ubicacion', initialData?.ubicacion);
+    // eslint-disable-next-line no-console
+    console.log('BeneficiarioForm: normalized ubicacion', normalizedInitialData?.ubicacion);
+  }
+
+  const hasExistingLocation = isEditing && !!normalizedInitialData?.ubicacion;
 
   const form = useForm<BeneficiarioFormValues>({
     resolver: zodResolver(beneficiarioFormSchema),
@@ -61,7 +131,30 @@ export function BeneficiarioForm({ initialData, isEditing = false }: Beneficiari
     },
   });
 
+  // Track if address fields have been modified from initial values
+  const addressFieldsModified = useMemo(() => {
+    if (!isEditing || !initialData) return true; // Always geocode when creating
+    
+    const currentDir = form.watch('direccion_completa') || '';
+    const currentCity = form.watch('ciudad') || '';
+    const currentProv = form.watch('provincia') || '';
+    const currentCP = form.watch('codigo_postal') || '';
+    
+    const initialDir = initialData.direccion_completa || '';
+    const initialCity = initialData.ciudad || '';
+    const initialProv = initialData.provincia || '';
+    const initialCP = initialData.codigo_postal || '';
+    
+    return currentDir !== initialDir || 
+           currentCity !== initialCity || 
+           currentProv !== initialProv || 
+           currentCP !== initialCP;
+  }, [isEditing, initialData, form.watch('direccion_completa'), form.watch('ciudad'), form.watch('provincia'), form.watch('codigo_postal')]);
+
   useEffect(() => {
+    // Only increment version if fields are modified (to trigger geocoding)
+    if (!addressFieldsModified) return;
+    
     const dir = (form.getValues('direccion_completa') || '').trim();
     const city = (form.getValues('ciudad') || '').trim();
     const prov = (form.getValues('provincia') || '').trim();
@@ -69,36 +162,48 @@ export function BeneficiarioForm({ initialData, isEditing = false }: Beneficiari
     if (dir && city && prov && cp) {
       setAddrVersion((v) => v + 1);
     }
-  }, [form.watch('direccion_completa'), form.watch('ciudad'), form.watch('provincia'), form.watch('codigo_postal')]);
+  }, [addressFieldsModified, form.watch('direccion_completa'), form.watch('ciudad'), form.watch('provincia'), form.watch('codigo_postal')]);
 
   const onSubmit = async (values: BeneficiarioFormValues) => {
     try {
       setLoading(true);
-      const pacienteData = {
-        ...values,
-        ubicacion: values.ubicacion
-          ? `SRID=4326;POINT(${values.ubicacion.lng} ${values.ubicacion.lat})`
-          : null,
-      };
+      console.log('=== Guardando beneficiario ===');
+      console.log('Valores del formulario:', values);
+      console.log('Ubicación a guardar:', values.ubicacion);
+      
+      let res: Response;
+      const editId = isEditing ? initialData?.id : null;
 
-      if (isEditing && initialData?.id) {
-        const { error } = await supabase
-          .from('pacientes')
-          .update(pacienteData)
-          .eq('id', initialData.id);
-
-        if (error) throw error;
+      if (isEditing) {
+        if (!editId) {
+          // eslint-disable-next-line no-console
+          console.error('Edit submit without valid id. initialData:', initialData);
+          throw new Error('ID de paciente no válido para actualizar');
+        }
+        res = await fetch(`/api/beneficiarios/${editId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(values),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data?.error || 'Error actualizando paciente');
+        }
         toast({ title: '¡Éxito!', description: 'Paciente actualizado correctamente' });
       } else {
-        const { error } = await supabase
-          .from('pacientes')
-          .insert([pacienteData]);
-
-        if (error) throw error;
+        res = await fetch('/api/beneficiarios', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(values),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data?.error || 'Error creando paciente');
+        }
         toast({ title: '¡Éxito!', description: 'Paciente creado correctamente' });
       }
 
-      router.push('/beneficiarios');
+      router.push('/protected/beneficiarios');
       router.refresh();
     } catch (error) {
       console.error('Error al guardar paciente:', error);
@@ -268,23 +373,27 @@ export function BeneficiarioForm({ initialData, isEditing = false }: Beneficiari
         <FormControl>
           <MapboxLocationPicker
             initialLocation={
-              field.value
-                ? (typeof (field.value as any).lng === 'number'
-                    ? (field.value as any)
-                    : (field.value as any).coordinates
-                      ? { lng: (field.value as any).coordinates[0], lat: (field.value as any).coordinates[1] }
-                      : null)
-                : null
+              normalizedInitialData?.ubicacion
+                ? (normalizedInitialData.ubicacion as any)
+                : toLngLat(field.value)
             }
             onLocationSelect={field.onChange}
-            address={[
-              form.watch('direccion_completa'),
-              form.watch('ciudad'),
-              form.watch('provincia'),
-              form.watch('codigo_postal'),
-              'Argentina',
-            ].filter(Boolean).join(', ')}
-            geocodeVersion={addrVersion}
+            address={
+              addressFieldsModified
+                ? [
+                    form.watch('direccion_completa'),
+                    form.watch('ciudad'),
+                    form.watch('provincia'),
+                    form.watch('codigo_postal'),
+                    'Argentina',
+                  ].filter(Boolean).join(', ')
+                : '' // Don't geocode if fields haven't changed
+            }
+            geocodeVersion={addressFieldsModified ? addrVersion : undefined}
+            preferredCity={form.watch('ciudad') || undefined}
+            preferredPostcode={form.watch('codigo_postal') || undefined}
+            preferredRegion={form.watch('provincia') || 'Mendoza'}
+            disableAutoGeocode={!addressFieldsModified}
           />
         </FormControl>
         <FormMessage />
@@ -297,7 +406,7 @@ export function BeneficiarioForm({ initialData, isEditing = false }: Beneficiari
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.push('/beneficiarios')}
+            onClick={() => router.push('/protected/beneficiarios')}
             disabled={loading}
           >
             Cancelar
