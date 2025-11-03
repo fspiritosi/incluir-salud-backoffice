@@ -5,6 +5,7 @@ import { ThemeSwitcher } from "@/components/theme-switcher";
 import { hasEnvVars } from "@/lib/utils";
 import Link from "next/link";
 import { Sidebar } from '@/components/sidebar';
+import Image from 'next/image';
 
 export default function ProtectedLayout({
   children,
@@ -16,7 +17,9 @@ export default function ProtectedLayout({
       {/* Navbar */}
       <nav className="w-full flex justify-between items-center border-b border-b-foreground/10 h-16 px-5">
         <div className="font-semibold">
-          <Link href={"/"}>Incluir</Link>
+          <Link href={"/protected"}>
+            <Image src="/images/logoIncluirTransparente.png" alt="Logo" width={40} height={40} />
+          </Link>
         </div>
         <div className="flex items-center gap-4">
           <ThemeSwitcher />
