@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { updatePrestacion } from '@/app/protected/prestaciones/actions';
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    const { id } = await context.params;
     const body = await req.json();
-    const { data, error } = await updatePrestacion(params.id, body);
+    const { data, error } = await updatePrestacion(id, body);
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }

@@ -38,7 +38,7 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
   const filtered = useMemo(() => {
     return data.filter((row) => {
       const byTipo = (row.tipo_prestacion || "").toLowerCase().includes(fTipo.toLowerCase());
-      const byEstado = (row.estado || "").toLowerCase().includes(fEstado.toLowerCase());
+      const byEstado = fEstado ? (row.estado || "") === fEstado : true;
       const fullName = row.paciente ? `${row.paciente.apellido} ${row.paciente.nombre}`.toLowerCase() : "";
       const byPaciente = fullName.includes(fPaciente.toLowerCase());
       const byDni = (row.paciente?.documento || "").toLowerCase().includes(fDni.toLowerCase());
@@ -70,7 +70,16 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
         <Input placeholder="Filtrar tipo de prestación" value={fTipo} onChange={(e) => setFTipo(e.target.value)} />
-        <Input placeholder="Filtrar estado" value={fEstado} onChange={(e) => setFEstado(e.target.value)} />
+        <select
+          className="border rounded px-3 py-2 text-sm"
+          value={fEstado}
+          onChange={(e) => setFEstado(e.target.value)}
+        >
+          <option value="">Todos los estados</option>
+          <option value="pendiente">pendiente</option>
+          <option value="completada">completada</option>
+          <option value="cancelada">cancelada</option>
+        </select>
         <Input placeholder="Filtrar paciente (Apellido Nombre)" value={fPaciente} onChange={(e) => setFPaciente(e.target.value)} />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">

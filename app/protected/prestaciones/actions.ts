@@ -158,6 +158,39 @@ export async function createPrestacion(values: PrestacionInput) {
   return { data, error };
 }
 
+export async function createPrestacionesBulk(common: Omit<PrestacionInput, 'fecha'>, fechas: string[]) {
+  const supabase = await createClient();
+  if (!Array.isArray(fechas) || fechas.length === 0) {
+    return { data: null, error: { message: 'No hay fechas para insertar' } } as const;
+  }
+  // Normalizar y limitar a 60
+  const sanitized = fechas
+    .map(f => {
+      try { return new Date(f).toISOString(); } catch { return null; }
+    })
+    .filter((f): f is string => !!f)
+    .slice(0, 60);
+  if (sanitized.length === 0) {
+    return { data: null, error: { message: 'Fechas inválidas' } } as const;
+  }
+
+  const records = sanitized.map((f) => ({
+    ...common,
+    fecha: f,
+    estado: common.estado ?? 'pendiente',
+    user_id: common.user_id,
+    monto: common.monto == null ? null : Number(common.monto),
+  }));
+
+  const { data, error } = await supabase
+    .from('prestaciones')
+    .insert(records)
+    .select('id');
+
+  if (error) return { data: null, error } as const;
+  return { data, error: null } as const;
+}
+
 export async function updatePrestacion(id: string, values: PrestacionInput) {
   const supabase = await createClient();
   
