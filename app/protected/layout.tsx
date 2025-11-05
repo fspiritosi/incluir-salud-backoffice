@@ -5,6 +5,7 @@ import { ThemeSwitcher } from "@/components/theme-switcher";
 import { hasEnvVars } from "@/lib/utils";
 import Link from "next/link";
 import { Sidebar } from '@/components/sidebar';
+import Image from 'next/image';
 
 export default function ProtectedLayout({
   children,
@@ -16,7 +17,9 @@ export default function ProtectedLayout({
       {/* Navbar */}
       <nav className="w-full flex justify-between items-center border-b border-b-foreground/10 h-16 px-5">
         <div className="font-semibold">
-          <Link href={"/"}>Incluir</Link>
+          <Link href={"/protected"}>
+            <Image src="/images/logoIncluirTransparente.png" alt="Logo" width={40} height={40} />
+          </Link>
         </div>
         <div className="flex items-center gap-4">
           <ThemeSwitcher />
@@ -35,15 +38,7 @@ export default function ProtectedLayout({
       {/* Footer */}
       <footer className="w-full flex items-center justify-center border-t mx-auto text-center text-xs gap-8 py-16">
         <p>
-          Powered by{" "}
-          <a
-            href="https://supabase.com/?utm_source=create-next-app&utm_medium=template&utm_term=nextjs"
-            target="_blank"
-            className="font-bold hover:underline"
-            rel="noreferrer"
-          >
-            Supabase
-          </a>
+          <span className="font-bold">Incluir Salud Mendoza 2025</span>
         </p>
       </footer>
     </div>
