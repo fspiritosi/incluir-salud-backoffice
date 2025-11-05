@@ -1,12 +1,32 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
+import { 
+  ColumnDef,
+  ColumnFiltersState,
+  SortingState,
+  VisibilityState,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Pencil } from "lucide-react";
+import { Pencil, MoreHorizontalIcon } from "lucide-react";
+import { DataTable } from "@/components/ui/data-table";
+import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
 import { canCreateOrEditPrestacion } from "@/utils/permissions";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export type PrestacionRow = {
   id: string;
@@ -30,136 +50,224 @@ export type PrestacionRow = {
 };
 
 export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
-  const [fTipo, setFTipo] = useState("");
-  const [fEstado, setFEstado] = useState("");
-  const [fPaciente, setFPaciente] = useState("");
-  const [fDni, setFDni] = useState("");
-  const [fFechaDesde, setFFechaDesde] = useState("");
-  const [fFechaHasta, setFFechaHasta] = useState("");
   const { roles, loading } = useBackofficeRoles();
   const canWritePrestaciones = canCreateOrEditPrestacion(roles);
+  
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [fechaInicio, setFechaInicio] = useState<string>("");
+  const [fechaFin, setFechaFin] = useState<string>("");
 
-  const filtered = useMemo(() => {
-    return data.filter((row) => {
-      const byTipo = (row.tipo_prestacion || "").toLowerCase().includes(fTipo.toLowerCase());
-      const byEstado = fEstado ? (row.estado || "") === fEstado : true;
-      const fullName = row.paciente ? `${row.paciente.apellido} ${row.paciente.nombre}`.toLowerCase() : "";
-      const byPaciente = fullName.includes(fPaciente.toLowerCase());
-      const byDni = (row.paciente?.documento || "").toLowerCase().includes(fDni.toLowerCase());
-      
-      // Filter by date range
-      let byFecha = true;
-      if (fFechaDesde || fFechaHasta) {
-        const rowDate = new Date(row.fecha);
-        rowDate.setHours(0, 0, 0, 0); // Reset time to compare only dates
+  const columns: ColumnDef<PrestacionRow>[] = [
+    {
+      accessorKey: "tipo_prestacion",
+      header: "Tipo",
+      enableColumnFilter: true,
+      filterFn: "includesString",
+    },
+    {
+      accessorKey: "fecha",
+      header: "Fecha",
+      cell: ({ row }) => new Date(row.getValue("fecha")).toLocaleDateString('es-AR'),
+      filterFn: (row, columnId, filterValues) => {
+        const fecha = new Date(row.getValue(columnId));
+        const [inicio, fin] = filterValues as [string, string];
         
-        if (fFechaDesde) {
-          const desde = new Date(fFechaDesde);
-          desde.setHours(0, 0, 0, 0);
-          byFecha = byFecha && rowDate >= desde;
-        }
-        
-        if (fFechaHasta) {
-          const hasta = new Date(fFechaHasta);
-          hasta.setHours(23, 59, 59, 999); // End of day
-          byFecha = byFecha && rowDate <= hasta;
-        }
+        if (!inicio && !fin) return true;
+        if (inicio && !fin) return fecha >= new Date(inicio);
+        if (!inicio && fin) return fecha <= new Date(fin);
+        return fecha >= new Date(inicio) && fecha <= new Date(fin);
+      },
+    },
+    {
+      accessorKey: "estado",
+      header: "Estado",
+      cell: ({ row }) => row.getValue("estado") || "-",
+      meta: {
+        filterType: "select",
+        options: ["pendiente", "completada", "cancelada"]
       }
-      
-      return byTipo && byEstado && byPaciente && byDni && byFecha;
-    });
-  }, [data, fTipo, fEstado, fPaciente, fDni, fFechaDesde, fFechaHasta]);
+    },
+    {
+      accessorKey: "monto",
+      header: "Monto",
+      cell: ({ row }) => row.getValue("monto") != null ? `$${Number(row.getValue("monto")).toFixed(2)}` : "-",
+    },
+    {
+      accessorKey: "prestador",
+      header: "Prestador",
+      cell: ({ row }) => {
+        const prestador = row.getValue("prestador") as PrestacionRow["prestador"];
+        return prestador ? `${prestador.nombre} ${prestador.apellido}` : '-';
+      },
+      filterFn: (row, columnId, filterValue) => {
+        const prestador = row.getValue(columnId) as PrestacionRow["prestador"];
+        const fullName = prestador ? `${prestador.apellido} ${prestador.nombre}`.toLowerCase() : "";
+        return fullName.includes(filterValue.toLowerCase());
+      },
+    },
+    {
+      accessorKey: "paciente",
+      header: "Paciente",
+      cell: ({ row }) => {
+        const paciente = row.getValue("paciente") as PrestacionRow["paciente"];
+        return paciente ? `${paciente.apellido}, ${paciente.nombre}` : '-';
+      },
+      filterFn: (row, columnId, filterValue) => {
+        const paciente = row.getValue(columnId) as PrestacionRow["paciente"];
+        const fullName = paciente ? `${paciente.apellido} ${paciente.nombre}`.toLowerCase() : "";
+        return fullName.includes(filterValue.toLowerCase());
+      },
+    },
+    {
+      id: "paciente_documento",
+      header: "DNI",
+      accessorFn: (row) => row.paciente?.documento,
+      cell: ({ row }) => {
+        const paciente = row.getValue("paciente") as PrestacionRow["paciente"];
+        return paciente?.documento || '-';
+      },
+    },
+    {
+      id: "actions",
+      header: "Acciones",
+      cell: ({ row }) => {
+        const prestacion = row.original;
+        return (
+          canWritePrestaciones && !loading ? (
+            <Link href={`/protected/prestaciones/editar/${prestacion.id}`} aria-label="Editar">
+              <Button size="icon" variant="outline">
+                <Pencil className="h-4 w-4" />
+              </Button>
+            </Link>
+          ) : (
+            <Button
+              size="icon"
+              variant="outline"
+              disabled
+              title="No tenés permiso para editar prestaciones"
+              aria-disabled
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+          )
+        );
+      },
+    },
+  ];
+
+  const table = useReactTable({
+    data,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
+    onColumnVisibilityChange: setColumnVisibility,
+    enableRowSelection: false,
+    state: {
+      sorting,
+      columnFilters,
+      columnVisibility,
+    },
+    initialState: {
+      pagination: {
+        pageSize: 10,
+      },
+    },
+  });
 
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-semibold">Prestaciones</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-        <Input placeholder="Filtrar tipo de prestación" value={fTipo} onChange={(e) => setFTipo(e.target.value)} />
-        <select
-          className="border rounded px-3 py-2 text-sm"
-          value={fEstado}
-          onChange={(e) => setFEstado(e.target.value)}
-        >
-          <option value="">Todos los estados</option>
-          <option value="pendiente">pendiente</option>
-          <option value="completada">completada</option>
-          <option value="cancelada">cancelada</option>
-        </select>
-        <Input placeholder="Filtrar paciente (Apellido Nombre)" value={fPaciente} onChange={(e) => setFPaciente(e.target.value)} />
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold">Prestaciones</h2>
+        
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="ml-auto">
+              <MoreHorizontalIcon className="mr-2 h-4 w-4" />
+              Columnas
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {table
+              .getAllColumns()
+              .filter((column) => column.getCanHide())
+              .map((column) => (
+                <DropdownMenuCheckboxItem
+                  key={column.id}
+                  className="capitalize max-w-[200px] truncate"
+                  checked={column.getIsVisible()}
+                  onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                  title={column.columnDef.header?.toString() || column.id}
+                >
+                  {column.columnDef.header?.toString() || column.id}
+                </DropdownMenuCheckboxItem>
+              ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-        <Input placeholder="Filtrar DNI" value={fDni} onChange={(e) => setFDni(e.target.value)} />
-        <Input 
-          type="date" 
-          placeholder="Fecha desde" 
-          value={fFechaDesde} 
-          onChange={(e) => setFFechaDesde(e.target.value)}
-          className="text-sm"
+
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+        <Input
+          placeholder="Filtrar por tipo..."
+          value={(table.getColumn("tipo_prestacion")?.getFilterValue() as string) ?? ""}
+          onChange={(event) =>
+            table.getColumn("tipo_prestacion")?.setFilterValue(event.target.value)
+          }
         />
-        <Input 
-          type="date" 
-          placeholder="Fecha hasta" 
-          value={fFechaHasta} 
-          onChange={(e) => setFFechaHasta(e.target.value)}
-          className="text-sm"
+        <Input
+          placeholder="Filtrar por paciente..."
+          value={(table.getColumn("paciente")?.getFilterValue() as string) ?? ""}
+          onChange={(event) =>
+            table.getColumn("paciente")?.setFilterValue(event.target.value)
+          }
+        />
+        <Input
+          placeholder="Filtrar por DNI..."
+          value={(table.getColumn("paciente_documento")?.getFilterValue() as string) ?? ""}
+          onChange={(event) =>
+            table.getColumn("paciente_documento")?.setFilterValue(event.target.value)
+          }
+        />
+        <Input
+          placeholder="Filtrar por prestador..."
+          value={(table.getColumn("prestador")?.getFilterValue() as string) ?? ""}
+          onChange={(event) =>
+            table.getColumn("prestador")?.setFilterValue(event.target.value)
+          }
+        />
+        <Input
+          type="date"
+          placeholder="Desde..."
+          value={fechaInicio}
+          onChange={(e) => {
+            setFechaInicio(e.target.value);
+            table.getColumn("fecha")?.setFilterValue([e.target.value, fechaFin]);
+          }}
+        />
+        <Input
+          type="date"
+          placeholder="Hasta..."
+          value={fechaFin}
+          onChange={(e) => {
+            setFechaFin(e.target.value);
+            table.getColumn("fecha")?.setFilterValue([fechaInicio, e.target.value]);
+          }}
         />
       </div>
 
-      <div className="overflow-x-auto border rounded-md">
-        <table className="min-w-full text-sm">
-          <thead className="bg-muted/50">
-            <tr>
-              <th className="text-left p-3">Tipo</th>
-              <th className="text-left p-3">Fecha</th>
-              <th className="text-left p-3">Estado</th>
-              <th className="text-left p-3">Monto</th>
-              <th className="text-left p-3">Prestador</th>
-              <th className="text-left p-3">Paciente</th>
-              <th className="text-left p-3">DNI</th>
-              <th className="text-left p-3">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((row) => (
-              <tr key={row.id} className="border-t">
-                <td className="p-3">{row.tipo_prestacion}</td>
-                <td className="p-3">{new Date(row.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })}</td>
-                <td className="p-3">{row.estado || "-"}</td>
-                <td className="p-3">{row.monto != null ? `$${row.monto.toFixed(2)}` : "-"}</td>
-                <td className="p-3">{row.prestador ? `${row.prestador.nombre} ${row.prestador.apellido}` : '-'}</td>
-                <td className="p-3">{row.paciente ? `${row.paciente.apellido}, ${row.paciente.nombre}` : '-'}</td>
-                <td className="p-3">{row.paciente?.documento || '-'}</td>
-                <td className="p-3">
-                  {canWritePrestaciones && !loading ? (
-                    <Link href={`/protected/prestaciones/editar/${row.id}`} aria-label="Editar">
-                      <Button size="icon" variant="outline">
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                    </Link>
-                  ) : (
-                    <Button
-                      size="icon"
-                      variant="outline"
-                      disabled
-                      title="No tenés permiso para editar prestaciones"
-                      aria-disabled
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={8} className="p-6 text-center text-muted-foreground">
-                  Sin resultados
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <DataTable table={table} isLoading={loading} />
+      
+      <DataTablePagination 
+        table={table} 
+        showSelectedCount={false}
+        showPageNumbers={true}
+        pageSizeOptions={[10, 25, 50, 100]}
+      />
     </div>
   );
 }
