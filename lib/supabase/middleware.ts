@@ -59,6 +59,45 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // Role-based route guards
+  try {
+    const { data: userRes } = await supabase.auth.getUser();
+    const currentUserId = userRes?.user?.id;
+    let roles: string[] = [];
+    if (currentUserId) {
+      const { data: roleRows } = await supabase
+        .from("v_user_roles")
+        .select("role")
+        .eq("user_id", currentUserId);
+      roles = (roleRows || []).map((r: any) => r.role as string);
+    }
+
+    const path = request.nextUrl.pathname;
+    const isPrestacionCreate = path.startsWith("/protected/prestaciones/crear");
+    const isPrestacionEdit = path.startsWith("/protected/prestaciones/editar/");
+    const isBeneficiarioCreate = path.startsWith("/protected/beneficiarios/crear");
+    const isBeneficiarioEdit = path.startsWith("/protected/beneficiarios/editar/");
+
+    const hasPrestacionWrite = roles.some((r) => ["auditor", "super_admin"].includes(r));
+    const hasBeneficiarioWrite = roles.some((r) => ["administrativo", "auditor", "super_admin"].includes(r));
+
+    if ((isPrestacionCreate || isPrestacionEdit) && !hasPrestacionWrite) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/protected/prestaciones";
+      url.searchParams.set("denied", "1");
+      return NextResponse.redirect(url);
+    }
+
+    if ((isBeneficiarioCreate || isBeneficiarioEdit) && !hasBeneficiarioWrite) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/protected/beneficiarios";
+      url.searchParams.set("denied", "1");
+      return NextResponse.redirect(url);
+    }
+  } catch {
+    // Si falla lectura de roles, no bloquear; RLS igual protege en backend
+  }
+
   // IMPORTANT: You *must* return the supabaseResponse object as it is.
   // If you're creating a new response object with NextResponse.next() make sure to:
   // 1. Pass the request in it, like so:
@@ -74,3 +113,4 @@ export async function updateSession(request: NextRequest) {
 
   return supabaseResponse;
 }
+

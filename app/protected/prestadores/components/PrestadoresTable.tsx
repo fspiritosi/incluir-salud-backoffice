@@ -4,6 +4,8 @@ import { useState, useMemo } from "react";
 import { Search, Check, X, Filter } from "lucide-react";
 import { togglePrestadorActivo } from "../actions";
 import { useRouter } from "next/navigation";
+import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
+import { canTogglePrestador } from "@/utils/permissions";
 
 type Prestador = {
   id: string;
@@ -18,6 +20,8 @@ type Prestador = {
 
 export default function PrestadoresTable({ prestadores }: { prestadores: Prestador[] }) {
   const router = useRouter();
+  const { roles, loading } = useBackofficeRoles();
+  const canToggle = canTogglePrestador(roles);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterActivo, setFilterActivo] = useState<"todos" | "activos" | "inactivos">("todos");
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
@@ -164,7 +168,8 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <button
                       onClick={() => handleToggleActivo(prestador.id, prestador.activo)}
-                      disabled={isUpdating === prestador.id}
+                      disabled={isUpdating === prestador.id || !canToggle || loading}
+                      title={!canToggle && !loading ? "No tenés permiso para habilitar/deshabilitar prestadores" : undefined}
                       className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
                         prestador.activo
                           ? "bg-red-100 text-red-700 hover:bg-red-200"

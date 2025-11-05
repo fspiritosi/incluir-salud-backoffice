@@ -11,6 +11,17 @@ export default async function PrestacionesPage() {
   if (claimsError || !claims?.claims) {
     redirect("/auth/login");
   }
+  const { data: userRes } = await supabase.auth.getUser();
+  const userId = userRes?.user?.id;
+  let roles: string[] = [];
+  if (userId) {
+    const { data: roleRows } = await supabase
+      .from("v_user_roles")
+      .select("role")
+      .eq("user_id", userId);
+    roles = (roleRows || []).map((r: any) => r.role as string);
+  }
+  const canCreate = roles.some((r) => ["auditor", "super_admin"].includes(r));
 
   const { data, error } = await listPrestaciones();
   if (error) {
@@ -26,11 +37,16 @@ export default async function PrestacionesPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Prestaciones</h1>
-        <Link href="/protected/prestaciones/crear">
-          <Button>Nueva Prestación</Button>
-        </Link>
+        {canCreate ? (
+          <Link href="/protected/prestaciones/crear">
+            <Button>Nueva Prestación</Button>
+          </Link>
+        ) : (
+          <Button disabled title="No tenés permiso para crear prestaciones">Nueva Prestación</Button>
+        )}
       </div>
       <PrestacionesTable data={(data || []) as any} />
     </div>
   );
 }
+

@@ -13,6 +13,18 @@ export default async function BeneficiariosPage() {
     redirect("/auth/login");
   }
 
+  const { data: userRes } = await supabase.auth.getUser();
+  const userId = userRes?.user?.id;
+  let roles: string[] = [];
+  if (userId) {
+    const { data: roleRows } = await supabase
+      .from("v_user_roles")
+      .select("role")
+      .eq("user_id", userId);
+    roles = (roleRows || []).map((r: any) => r.role as string);
+  }
+  const canCreate = roles.some((r) => ["administrativo", "auditor", "super_admin"].includes(r));
+
   const { data: pacientes, error } = await listBeneficiarios();
 
   if (error) {
@@ -28,9 +40,13 @@ export default async function BeneficiariosPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Beneficiarios</h1>
-        <Link href="/protected/beneficiarios/crear">
-          <Button>Nuevo</Button>
-        </Link>
+        {canCreate ? (
+          <Link href="/protected/beneficiarios/crear">
+            <Button>Nuevo</Button>
+          </Link>
+        ) : (
+          <Button disabled title="No tenés permiso para crear beneficiarios">Nuevo</Button>
+        )}
       </div>
       <BeneficiariosTable data={(pacientes || []) as any} />
     </div>

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Pencil } from "lucide-react";
+import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
+import { canCreateOrEditPrestacion } from "@/utils/permissions";
 
 export type PrestacionRow = {
   id: string;
@@ -34,6 +36,8 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
   const [fDni, setFDni] = useState("");
   const [fFechaDesde, setFFechaDesde] = useState("");
   const [fFechaHasta, setFFechaHasta] = useState("");
+  const { roles, loading } = useBackofficeRoles();
+  const canWritePrestaciones = canCreateOrEditPrestacion(roles);
 
   const filtered = useMemo(() => {
     return data.filter((row) => {
@@ -68,6 +72,7 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
 
   return (
     <div className="space-y-4">
+      <h2 className="text-base font-semibold">Prestaciones</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
         <Input placeholder="Filtrar tipo de prestación" value={fTipo} onChange={(e) => setFTipo(e.target.value)} />
         <select
@@ -125,11 +130,23 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
                 <td className="p-3">{row.paciente ? `${row.paciente.apellido}, ${row.paciente.nombre}` : '-'}</td>
                 <td className="p-3">{row.paciente?.documento || '-'}</td>
                 <td className="p-3">
-                  <Link href={`/protected/prestaciones/editar/${row.id}`} aria-label="Editar">
-                    <Button size="icon" variant="outline">
+                  {canWritePrestaciones && !loading ? (
+                    <Link href={`/protected/prestaciones/editar/${row.id}`} aria-label="Editar">
+                      <Button size="icon" variant="outline">
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                    </Link>
+                  ) : (
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      disabled
+                      title="No tenés permiso para editar prestaciones"
+                      aria-disabled
+                    >
                       <Pencil className="h-4 w-4" />
                     </Button>
-                  </Link>
+                  )}
                 </td>
               </tr>
             ))}

@@ -5,10 +5,14 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { LayoutDashboard, UserPlus, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useBackofficeRoles } from '@/hooks/useBackofficeRoles';
+import { canCreateOrEditPaciente } from '@/utils/permissions';
 
 export function Sidebar() {
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const { roles, loading } = useBackofficeRoles();
+  const canCreateBenef = canCreateOrEditPaciente(roles);
 
   const menuItems = [
     {
@@ -21,11 +25,12 @@ export function Sidebar() {
       href: '/protected/beneficiarios',
       icon: Users,
     },
-    {
+    // Crear Beneficiario: solo si tiene permiso
+    canCreateBenef ? {
       name: 'Crear Beneficiario',
       href: '/protected/beneficiarios/crear',
       icon: UserPlus,
-    },
+    } : null,
     {
       name: 'Prestaciones',
       href: '/protected/prestaciones',
@@ -66,7 +71,7 @@ export function Sidebar() {
 
         <div className="flex-1">
           <nav className="grid items-start px-2 text-sm font-medium lg:px-4 py-4 space-y-1">
-            {menuItems.map((item) => {
+            {menuItems.filter(Boolean).map((item: any) => {
               const isActive = pathname === item.href;
               return (
                 <Link

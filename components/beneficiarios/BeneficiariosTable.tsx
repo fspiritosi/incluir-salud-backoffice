@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pencil, UserX, RotateCcw } from "lucide-react";
+import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
+import { canCreateOrEditPaciente, canToggleBeneficiario } from "@/utils/permissions";
 
 type Paciente = {
   id: string;
@@ -25,6 +27,9 @@ interface BeneficiariosTableProps {
 
 export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
   const router = useRouter();
+  const { roles, loading } = useBackofficeRoles();
+  const canEdit = canCreateOrEditPaciente(roles);
+  const canToggle = canToggleBeneficiario(roles);
   const [fNombre, setFNombre] = useState("");
   const [fApellido, setFApellido] = useState("");
   const [fDocumento, setFDocumento] = useState("");
@@ -111,17 +116,24 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
                 <td className="p-3">{row.activo ? "Sí" : "No"}</td>
                 <td className="p-3">
                   <div className="flex items-center gap-2">
-                    <Link href={`/protected/beneficiarios/editar/${row.id}`} aria-label="Editar">
-                      <Button size="icon" variant="outline">
+                    {canEdit && !loading ? (
+                      <Link href={`/protected/beneficiarios/editar/${row.id}`} aria-label="Editar">
+                        <Button size="icon" variant="outline">
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      </Link>
+                    ) : (
+                      <Button size="icon" variant="outline" disabled title="No tenés permiso para editar beneficiarios" aria-disabled>
                         <Pencil className="h-4 w-4" />
                       </Button>
-                    </Link>
+                    )}
                     {row.activo ? (
                       <Button
                         size="icon"
                         variant="destructive"
                         aria-label="Baja"
-                        disabled={busyId === row.id}
+                        disabled={busyId === row.id || !canToggle || loading}
+                        title={!canToggle && !loading ? "No tenés permiso para dar de baja beneficiarios" : undefined}
                         onClick={() => { setTargetRow(row); setConfirmOpen(true); }}
                       >
                         <UserX className="h-4 w-4" />
@@ -131,7 +143,8 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
                         size="icon"
                         variant="default"
                         aria-label="Re-activar"
-                        disabled={busyId === row.id}
+                        disabled={busyId === row.id || !canToggle || loading}
+                        title={!canToggle && !loading ? "No tenés permiso para re-activar beneficiarios" : undefined}
                         onClick={() => toggleActivo(row)}
                       >
                         <RotateCcw className="h-4 w-4" />
