@@ -466,13 +466,53 @@ useEffect(() => {
   }
 }, [initialLocation, map.current]);
 
-const handleOpenGoogleMaps = () => {
-  const query = (address && address.trim().length > 0)
-    ? address.trim()
-    : (failedAddress || '').trim();
-  const encodedAddress = encodeURIComponent(query);
-  const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
-  window.open(googleMapsUrl, '_blank');
+const handleOpenGoogleMaps = (e: React.MouseEvent) => {
+  // Prevenir la propagación del evento para que no afecte al formulario
+  e.preventDefault();
+  e.stopPropagation();
+
+  // Obtener la mejor fuente de ubicación disponible
+  let query = '';
+  
+  if (address && address.trim().length > 0) {
+    query = address.trim();
+  } else if (failedAddress && failedAddress.trim().length > 0) {
+    query = failedAddress.trim();
+  } else if (marker.current) {
+    const pos = marker.current.getLngLat();
+    query = `${pos.lat},${pos.lng}`;
+  }
+
+  if (!query) {
+    alert('No hay dirección o ubicación seleccionada para buscar');
+    return;
+  }
+
+  // Construir URL adecuada
+  let googleMapsUrl;
+  const coordsPattern = /^\s*-?\d+\.\d+\s*,\s*-?\d+\.\d+\s*$/;
+  
+  if (query.match(coordsPattern)) {
+    googleMapsUrl = `https://www.google.com/maps?q=${query}`;
+  } else {
+    googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+  }
+
+  // Método más confiable para abrir en nueva pestaña
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = googleMapsUrl;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+  } catch (error) {
+    console.error('Error al abrir Google Maps:', error);
+    // Fallback
+    window.open(googleMapsUrl, '_blank', 'noopener,noreferrer');
+  }
 };
 
 const handleManualCoords = () => {
