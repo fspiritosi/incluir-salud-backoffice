@@ -23,6 +23,9 @@ export function SignUpForm({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [repeatPassword, setRepeatPassword] = useState("");
+  const [nombre, setNombre] = useState("");
+  const [apellido, setApellido] = useState("");
+  const [documento, setDocumento] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
@@ -45,7 +48,14 @@ export function SignUpForm({
         password,
         options: {
           emailRedirectTo: `${window.location.origin}/protected`,
-        },
+          data: {
+            first_name: nombre,
+            last_name: apellido,
+            document_number: documento,
+            tipo_usuario: "incluir salud",
+            registration_source: 'web'
+          }
+        }
       });
       if (error) throw error;
       router.push("/auth/sign-up-success");
@@ -60,12 +70,45 @@ export function SignUpForm({
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl">Sign up</CardTitle>
-          <CardDescription>Create a new account</CardDescription>
+          <CardTitle className="text-2xl">Registro</CardTitle>
+          <CardDescription>Crear una nueva cuenta</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSignUp}>
             <div className="flex flex-col gap-6">
+              <div className="grid gap-2">
+                <Label htmlFor="nombre">Nombre</Label>
+                <Input
+                  id="nombre"
+                  type="text"
+                  placeholder="Tu nombre"
+                  required
+                  value={nombre}
+                  onChange={(e) => setNombre(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="apellido">Apellido</Label>
+                <Input
+                  id="apellido"
+                  type="text"
+                  placeholder="Tu apellido"
+                  required
+                  value={apellido}
+                  onChange={(e) => setApellido(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="documento">Documento</Label>
+                <Input
+                  id="documento"
+                  type="text"
+                  placeholder="Tu documento"
+                  required
+                  value={documento}
+                  onChange={(e) => setDocumento(e.target.value)}
+                />
+              </div>
               <div className="grid gap-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -79,7 +122,7 @@ export function SignUpForm({
               </div>
               <div className="grid gap-2">
                 <div className="flex items-center">
-                  <Label htmlFor="password">Password</Label>
+                  <Label htmlFor="password">Contraseña</Label>
                 </div>
                 <Input
                   id="password"
@@ -91,7 +134,7 @@ export function SignUpForm({
               </div>
               <div className="grid gap-2">
                 <div className="flex items-center">
-                  <Label htmlFor="repeat-password">Repeat Password</Label>
+                  <Label htmlFor="repeat-password">Repetir Contraseña</Label>
                 </div>
                 <Input
                   id="repeat-password"
@@ -103,13 +146,13 @@ export function SignUpForm({
               </div>
               {error && <p className="text-sm text-red-500">{error}</p>}
               <Button type="submit" className="w-full" disabled={isLoading}>
-                {isLoading ? "Creating an account..." : "Sign up"}
+                {isLoading ? "Creando cuenta..." : "Registrarse"}
               </Button>
             </div>
             <div className="mt-4 text-center text-sm">
-              Already have an account?{" "}
+              Ya tienes una cuenta?{" "}
               <Link href="/auth/login" className="underline underline-offset-4">
-                Login
+                Iniciar Sesión
               </Link>
             </div>
           </form>
