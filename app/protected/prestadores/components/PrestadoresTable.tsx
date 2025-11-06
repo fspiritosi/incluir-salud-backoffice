@@ -10,7 +10,6 @@ import {
   ColumnFiltersState,
   SortingState,
   VisibilityState,
-  flexRender,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
@@ -27,6 +26,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { togglePrestadorActivo } from "../actions";
 
 type Prestador = {
   id: string;
@@ -127,8 +127,8 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
             {isUpdating === prestador.id
               ? "Actualizando..."
               : prestador.activo
-              ? "Deshabilitar"
-              : "Habilitar"}
+                ? "Deshabilitar"
+                : "Habilitar"}
           </Button>
         );
       },
@@ -162,7 +162,7 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">Prestadores</h2>
-        
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="ml-auto">
