@@ -15,7 +15,7 @@ export default function ProtectedLayout({
   return (
     <div className="min-h-screen flex flex-col">
       {/* Navbar */}
-      <nav className="w-full flex justify-between items-center border-b border-b-foreground/10 h-16 px-5">
+      {/* <nav className="w-full flex justify-between items-center border-b border-b-foreground/10 h-16 px-5">
         <div className="font-semibold">
           <Link href={"/protected"}>
             <Image src="/images/logoIncluirTransparente.png" alt="Logo" width={40} height={40} />
@@ -23,9 +23,9 @@ export default function ProtectedLayout({
         </div>
         <div className="flex items-center gap-4">
           <ThemeSwitcher />
-          {!hasEnvVars ? <EnvVarWarning /> : <AuthButton />}
+          {!hasEnvVars ? <EnvVarWarning /> : <AuthButton isCollapsed={false} />}
         </div>
-      </nav>
+      </nav> */}
 
       {/* Contenido principal con Sidebar */}
       <div className="flex flex-1">

@@ -7,6 +7,9 @@ import { cn } from '@/lib/utils';
 import { LayoutDashboard, UserPlus, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useBackofficeRoles } from '@/hooks/useBackofficeRoles';
 import { canCreateOrEditPaciente } from '@/utils/permissions';
+import Image from 'next/image';
+import { ThemeSwitcher } from '@/components/theme-switcher';
+import { AuthButton } from '@/components/auth-button';
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -26,11 +29,11 @@ export function Sidebar() {
       icon: Users,
     },
     // Crear Beneficiario: solo si tiene permiso
-    canCreateBenef ? {
-      name: 'Crear Beneficiario',
-      href: '/protected/beneficiarios/crear',
-      icon: UserPlus,
-    } : null,
+    // canCreateBenef ? {
+    //   name: 'Crear Beneficiario',
+    //   href: '/protected/beneficiarios/crear',
+    //   icon: UserPlus,
+    // } : null,
     {
       name: 'Prestaciones',
       href: '/protected/prestaciones',
@@ -51,7 +54,7 @@ export function Sidebar() {
   return (
     <div className={cn(
       "hidden border-r bg-muted/40 md:block transition-all duration-300",
-      isCollapsed ? "w-16" : "w-64"
+      isCollapsed ? "w-16" : "w-48"
     )}>
       <div className="flex h-full max-h-screen flex-col gap-2"> 
         {/* Botón de colapsar */}
@@ -67,10 +70,24 @@ export function Sidebar() {
               <ChevronLeft className="h-4 w-4" />
             )}
           </button>
+          
         </div>
 
         <div className="flex-1">
+          
           <nav className="grid items-start px-2 text-sm font-medium lg:px-4 py-4 space-y-1">
+            
+             <div className="font-semibold">
+          <Link href={"/protected"}>
+            <Image src="/images/logoIncluirTransparente.png" alt="Logo" width={40} height={40} />
+          </Link>
+          <AuthButton isCollapsed={isCollapsed} />
+           <div className="flex items-center gap-4">
+          <ThemeSwitcher />
+         
+          {/* {!hasEnvVars ? <EnvVarWarning /> : <AuthButton />} */}
+        </div>
+        </div>
             {menuItems.filter(Boolean).map((item: any) => {
               const isActive = pathname === item.href;
               return (
@@ -89,6 +106,7 @@ export function Sidebar() {
                 </Link>
               );
             })}
+             
           </nav>
         </div>
       </div>

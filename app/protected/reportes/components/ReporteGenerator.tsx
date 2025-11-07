@@ -7,6 +7,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 
+
 type Prestador = {
   id: string;
   nombre: string;
@@ -29,6 +30,7 @@ type ReporteData = {
     fecha: string;
     monto: number | null;
     descripcion: string | null;
+    estado: 'pendiente' | 'completada';
     paciente: {
       nombre: string;
       apellido: string;
@@ -45,6 +47,7 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
   const [prestadorId, setPrestadorId] = useState("");
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
+  const [estado, setEstado] = useState<'todos' | 'pendiente' | 'completada'>('todos');
   const [isLoading, setIsLoading] = useState(false);
   const [reporteData, setReporteData] = useState<ReporteData | null>(null);
 
@@ -54,9 +57,21 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
       return;
     }
 
+    // Asegurar formato YYYY-MM-DD
+    const formatDate = (dateStr: string) => {
+      const date = new Date(dateStr);
+      const iso = date.toISOString().split('T')[0];
+      return iso;
+    };
+
     setIsLoading(true);
     try {
-      const { data, error } = await getPrestacionesReporte(prestadorId, fechaInicio, fechaFin);
+      const { data, error } = await getPrestacionesReporte(
+        prestadorId, 
+        formatDate(fechaInicio),
+        formatDate(fechaFin),
+        estado === 'todos' ? undefined : estado
+      );
       
       if (error || !data) {
         alert("Error al generar el reporte");
@@ -75,9 +90,25 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
   const generarPDF = () => {
     if (!reporteData) return;
 
-    const doc = new jsPDF();
+    // Configurar documento con tipo extendido
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    }) as jsPDF & {
+      lastAutoTable: { finalY: number };
+      internal: {
+        getNumberOfPages: () => number;
+        pageSize: { height: number; width: number };
+      };
+    };
+    
     const { prestador, prestaciones, totales } = reporteData;
 
+    // Margen izquierdo
+    const marginLeft = 15;
+    
+    // Encabezado
     doc.setFontSize(18);
     doc.setFont("helvetica", "bold");
     doc.text("REPORTE DE PRESTACIONES", 105, 20, { align: "center" });
@@ -85,29 +116,55 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
     doc.setFontSize(14);
     doc.text("INCLUIR SALUD", 105, 28, { align: "center" });
 
+    // Datos del prestador
     doc.setFontSize(11);
     doc.setFont("helvetica", "bold");
-    doc.text("DATOS DEL PRESTADOR", 14, 45);
+    doc.text("DATOS DEL PRESTADOR", marginLeft, 45);
     
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    doc.text(`Nombre: ${prestador.apellido}, ${prestador.nombre}`, 14, 52);
-    doc.text(`Documento: ${prestador.documento || "N/A"}`, 14, 58);
-    doc.text(`Email: ${prestador.email || "N/A"}`, 14, 64);
-    doc.text(`Teléfono: ${prestador.telefono || "N/A"}`, 14, 70);
-    doc.text(`Período: ${new Date(fechaInicio).toLocaleDateString("es-AR")} - ${new Date(fechaFin).toLocaleDateString("es-AR")}`, 14, 76);
+    doc.text(`Nombre: ${prestador.apellido}, ${prestador.nombre}`, marginLeft, 52);
+    doc.text(`Documento: ${prestador.documento || "N/A"}`, marginLeft, 58);
+    doc.text(`Email: ${prestador.email || "N/A"}`, marginLeft, 64);
+    doc.text(`Teléfono: ${prestador.telefono || "N/A"}`, marginLeft, 70);
 
+    // Función para formatear fecha YYYY-MM-DD a DD-MM-YYYY
+    const formatToDMY = (fechaISO: string) => {
+      const [year, month, day] = fechaISO.split('-')
+      return `${day}-${month}-${year}`;
+    };
+
+    doc.text(`Período: ${formatToDMY(fechaInicio)} al ${formatToDMY(fechaFin)}`, marginLeft, 76);
+
+    // Tabla
     const tableData = prestaciones.map((p) => [
       new Date(p.fecha).toLocaleDateString("es-AR"),
       p.tipo_prestacion.replace(/_/g, " ").toUpperCase(),
       p.paciente ? `${p.paciente.apellido}, ${p.paciente.nombre}` : "N/A",
       p.paciente?.documento || "N/A",
+      p.estado.toUpperCase(),
       `$${(p.monto || 0).toLocaleString("es-AR")}`,
     ]);
 
+    // Pre-calcular total de páginas (método alternativo)
+    const tempDoc = new jsPDF();
+    
+    // Calcular altura total requerida
+    const rowHeight = 10; // Altura estimada por fila
+    const headerHeight = 15;
+    const totalHeight = headerHeight + (tableData.length * rowHeight);
+    
+    // Calcular espacio disponible por página (A4)
+    const pageHeight = tempDoc.internal.pageSize.height - 100; // Margen superior e inferior
+    
+    // Calcular total de páginas
+    const totalPages = Math.ceil(totalHeight / pageHeight);
+
+    // Documento real
     autoTable(doc, {
       startY: 85,
-      head: [["Fecha", "Tipo", "Paciente", "DNI Paciente", "Monto"]],
+      margin: { left: marginLeft, right: 15 },
+      head: [["Fecha", "Tipo", "Paciente", "DNI Paciente", "Estado", "Monto"]],
       body: tableData,
       theme: "grid",
       headStyles: {
@@ -121,19 +178,43 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
       },
       columnStyles: {
         0: { cellWidth: 25 },
-        1: { cellWidth: 40 },
-        2: { cellWidth: 50 },
-        3: { cellWidth: 30 },
-        4: { cellWidth: 30, halign: "right" },
+        1: { cellWidth: 35 },
+        2: { cellWidth: 40 },
+        3: { cellWidth: 25 },
+        4: { cellWidth: 28 },
+        5: { cellWidth: 25, halign: "right" },
       },
+      didDrawPage: function(data: any) {
+        const footerY = doc.internal.pageSize.height - 10;
+        doc.setFontSize(8);
+        doc.setTextColor(100);
+        
+        // Texto de generación alineado izquierda
+        const now = new Date();
+        doc.text(
+          `Generado: ${now.toLocaleDateString('es-AR')} ${now.toLocaleTimeString('es-AR', {hour: '2-digit', minute:'2-digit', hour12: false})} por ${prestador.apellido}, ${prestador.nombre}`,
+          data.settings.margin.left,
+          footerY
+        );
+        
+        // Paginación alineada derecha
+        doc.text(
+          `Página ${data.pageNumber} de ${totalPages}`,
+          doc.internal.pageSize.width - 20,
+          footerY,
+          { align: "right" }
+        );
+      }
     });
 
-    const finalY = (doc as any).lastAutoTable.finalY + 10;
+    // Totales
+    const finalY = doc.lastAutoTable.finalY + 10;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
-    doc.text(`Total de Prestaciones: ${totales.cantidad}`, 14, finalY);
-    doc.text(`Monto Total: $${totales.monto.toLocaleString("es-AR")}`, 14, finalY + 7);
+    doc.text(`Total de Prestaciones: ${totales.cantidad}`, marginLeft, finalY);
+    doc.text(`Monto Total: $${totales.monto.toLocaleString("es-AR")}`, marginLeft, finalY + 7);
 
+    // Guardar
     const fileName = `Reporte_${prestador.apellido}_${fechaInicio}_${fechaFin}.pdf`;
     doc.save(fileName);
   };
@@ -151,10 +232,10 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
       ["Documento:", prestador.documento || "N/A"],
       ["Email:", prestador.email || "N/A"],
       ["Teléfono:", prestador.telefono || "N/A"],
-      ["Período:", `${new Date(fechaInicio).toLocaleDateString("es-AR")} - ${new Date(fechaFin).toLocaleDateString("es-AR")}`],
+      ["Período:", `${fechaInicio} - ${fechaFin}`],
       [],
       ["PRESTACIONES COMPLETADAS"],
-      ["Fecha", "Tipo", "Paciente", "DNI Paciente", "Monto"],
+      ["Fecha", "Tipo", "Paciente", "DNI Paciente", "Estado", "Monto"],
     ];
 
     const prestacionesData = prestaciones.map((p) => [
@@ -162,6 +243,7 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
       p.tipo_prestacion.replace(/_/g, " ").toUpperCase(),
       p.paciente ? `${p.paciente.apellido}, ${p.paciente.nombre}` : "N/A",
       p.paciente?.documento || "N/A",
+      p.estado,
       p.monto || 0,
     ]);
 
@@ -182,6 +264,7 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
       { wch: 35 },
       { wch: 15 },
       { wch: 15 },
+      { wch: 15 },
     ];
 
     XLSX.utils.book_append_sheet(wb, ws, "Reporte");
@@ -195,7 +278,7 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
       <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Parámetros del Reporte</h2>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Prestador
@@ -237,6 +320,21 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Estado
+            </label>
+            <select
+              value={estado}
+              onChange={(e) => setEstado(e.target.value as 'todos' | 'pendiente' | 'completada')}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="todos">Todos</option>
+              <option value="pendiente">Pendientes</option>
+              <option value="completada">Completadas</option>
+            </select>
+          </div>
         </div>
 
         <div className="mt-4">
@@ -264,7 +362,7 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
             <div className="flex gap-2">
               <button
                 onClick={generarPDF}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
               >
                 <FileDown className="w-4 h-4" />
                 Descargar PDF
@@ -299,6 +397,7 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paciente</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Monto</th>
                 </tr>
               </thead>
@@ -313,6 +412,9 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-900">
                       {p.paciente ? `${p.paciente.apellido}, ${p.paciente.nombre}` : "N/A"}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      {p.estado}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-900">
                       ${(p.monto || 0).toLocaleString("es-AR")}

@@ -4,8 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 
 export async function getPrestacionesReporte(
   prestadorId: string,
-  fechaInicio: string,
-  fechaFin: string
+  fechaInicio: string, // Formato YYYY-MM-DD
+  fechaFin: string,    // Formato YYYY-MM-DD
+  estado?: 'pendiente' | 'completada'
 ) {
   const supabase = await createClient();
 
@@ -20,14 +21,21 @@ export async function getPrestacionesReporte(
     return { data: null, error: prestadorError };
   }
 
-  const { data: prestaciones, error: prestacionesError } = await supabase
+  // Consulta corregida con AND para rango exacto
+  let query = supabase
     .from("prestaciones")
-    .select("id, tipo_prestacion, fecha, monto, descripcion, paciente_id")
+    .select(`id, tipo_prestacion, fecha, monto, descripcion, paciente_id, estado, 
+             pacientes(nombre, apellido, documento)`)
     .eq("user_id", prestadorId)
-    .eq("estado", "completada")
-    .gte("fecha", fechaInicio)
-    .lte("fecha", fechaFin)
+    .gte("fecha", `${fechaInicio}T00:00:00-03:00`)
+    .lte("fecha", `${fechaFin}T23:59:59-03:00`)
     .order("fecha", { ascending: true });
+
+  if (estado) {
+    query = query.eq("estado", estado);
+  }
+
+  const { data: prestaciones, error: prestacionesError } = await query;
 
   if (prestacionesError) {
     console.error("Error obteniendo prestaciones:", prestacionesError);
@@ -67,4 +75,22 @@ export async function getPrestacionesReporte(
     },
     error: null,
   };
+}
+
+export async function getPrestadores() {
+  const supabase = await createClient();
+  
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, nombre, apellido, documento")
+    .eq("tipo_usuario", "prestador")
+    .order("apellido", { ascending: true })
+    .order("nombre", { ascending: true });
+
+  if (error) {
+    console.error("Error obteniendo prestadores:", error);
+    return [];
+  }
+
+  return data || [];
 }
