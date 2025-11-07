@@ -27,6 +27,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export type PrestacionRow = {
   id: string;
@@ -86,7 +87,13 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
       cell: ({ row }) => row.getValue("estado") || "-",
       meta: {
         filterType: "select",
-        options: ["pendiente", "completada", "cancelada"]
+        options: ["pendiente", "completada", "cancelada", "todos"]
+      },
+      filterFn: (row, columnId, filterValue) => {
+        const val = (filterValue as string) ?? "";
+        if (!val || val === "todos") return true;
+        const estado = (row.getValue(columnId) as string | null) ?? "";
+        return estado.toLowerCase() === val.toLowerCase();
       }
     },
     {
@@ -211,37 +218,60 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
         </DropdownMenu>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+      <div className="flex items-center gap-2 overflow-x-auto py-2">
         <Input
-          placeholder="Filtrar por tipo..."
+          placeholder="Tipo..."
+          className="w-[120px]"
           value={(table.getColumn("tipo_prestacion")?.getFilterValue() as string) ?? ""}
           onChange={(event) =>
             table.getColumn("tipo_prestacion")?.setFilterValue(event.target.value)
           }
         />
         <Input
-          placeholder="Filtrar por paciente..."
+          placeholder="Paciente..."
+          className="w-[120px]"
           value={(table.getColumn("paciente")?.getFilterValue() as string) ?? ""}
           onChange={(event) =>
             table.getColumn("paciente")?.setFilterValue(event.target.value)
           }
         />
         <Input
-          placeholder="Filtrar por DNI..."
+          placeholder="DNI..."
+          className="w-[100px]"
           value={(table.getColumn("paciente_documento")?.getFilterValue() as string) ?? ""}
           onChange={(event) =>
             table.getColumn("paciente_documento")?.setFilterValue(event.target.value)
           }
         />
         <Input
-          placeholder="Filtrar por prestador..."
+          placeholder="Prestador..."
+          className="w-[120px]"
           value={(table.getColumn("prestador")?.getFilterValue() as string) ?? ""}
           onChange={(event) =>
             table.getColumn("prestador")?.setFilterValue(event.target.value)
           }
         />
+        <div className="w-[140px]">
+          <Select
+            value={(table.getColumn("estado")?.getFilterValue() as string) ?? ""}
+            onValueChange={(value: string) =>
+              table.getColumn("estado")?.setFilterValue(value)
+            }
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Estado..." />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              <SelectItem value="pendiente">Pendiente</SelectItem>
+              <SelectItem value="completada">Completada</SelectItem>
+              <SelectItem value="cancelada">Cancelada</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <Input
           type="date"
+          className="w-[140px]"
           placeholder="Desde..."
           value={fechaInicio}
           onChange={(e) => {
@@ -251,6 +281,7 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
         />
         <Input
           type="date"
+          className="w-[140px]"
           placeholder="Hasta..."
           value={fechaFin}
           onChange={(e) => {

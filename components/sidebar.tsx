@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { LayoutDashboard, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
+import { LayoutDashboard, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight, UserCog } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ThemeSwitcher } from '@/components/theme-switcher';
 import { AuthButton } from '@/components/auth-button';
@@ -31,6 +31,11 @@ export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
       name: 'Prestaciones',
       href: '/protected/prestaciones',
       icon: ClipboardList,
+    },
+    {
+      name: 'Prestadores',
+      href: '/protected/prestadores',
+      icon: UserCog,
     },
     {
       name: 'Reportes',

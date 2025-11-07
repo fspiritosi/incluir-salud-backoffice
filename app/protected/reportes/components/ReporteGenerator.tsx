@@ -1,11 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { FileDown, FileSpreadsheet, Loader2 } from "lucide-react";
+import { FileDown, FileSpreadsheet, Loader2, ChevronsUpDown, Check } from "lucide-react";
 import { getPrestacionesReporte } from "../actions";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 
 type Prestador = {
@@ -45,6 +54,8 @@ type ReporteData = {
 
 export default function ReporteGenerator({ prestadores }: { prestadores: Prestador[] }) {
   const [prestadorId, setPrestadorId] = useState("");
+  const [prestadorOpen, setPrestadorOpen] = useState(false);
+  const [prestadorFilter, setPrestadorFilter] = useState("");
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
   const [estado, setEstado] = useState<'todos' | 'pendiente' | 'completada'>('todos');
@@ -283,29 +294,76 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
             <label className="block text-sm font-medium mb-2">
               Prestador
             </label>
-            <select
-              value={prestadorId}
-              onChange={(e) => setPrestadorId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">Seleccionar prestador...</option>
-              {prestadores.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.apellido}, {p.nombre} {p.documento ? `(${p.documento})` : ""}
-                </option>
-              ))}
-            </select>
+            <DropdownMenu open={prestadorOpen} onOpenChange={setPrestadorOpen}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={prestadorOpen}
+                  className="w-full justify-between"
+                >
+                  {(() => {
+                    const p = prestadores.find((x) => x.id === prestadorId);
+                    return p
+                      ? `${p.apellido}, ${p.nombre}${p.documento ? ` (${p.documento})` : ""}`
+                      : "Seleccionar prestador...";
+                  })()}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width] p-2">
+                <Input
+                  placeholder="Buscar por nombre o DNI..."
+                  value={prestadorFilter}
+                  onChange={(e) => setPrestadorFilter(e.target.value)}
+                  className="mb-2"
+                />
+                {prestadores
+                  .filter((p) => {
+                    const q = prestadorFilter.toLowerCase();
+                    return (
+                      `${p.apellido} ${p.nombre}`.toLowerCase().includes(q) ||
+                      (p.documento || "").toLowerCase().includes(q)
+                    );
+                  })
+                  .map((p) => {
+                    const label = `${p.apellido}, ${p.nombre}${p.documento ? ` (${p.documento})` : ""}`;
+                    return (
+                      <DropdownMenuItem
+                        key={p.id}
+                        onClick={() => {
+                          setPrestadorId(p.id);
+                          setPrestadorOpen(false);
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <Check className={`h-4 w-4 ${prestadorId === p.id ? "opacity-100" : "opacity-0"}`} />
+                        {label}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                {prestadores.filter((p) => {
+                  const q = prestadorFilter.toLowerCase();
+                  return (
+                    `${p.apellido} ${p.nombre}`.toLowerCase().includes(q) ||
+                    (p.documento || "").toLowerCase().includes(q)
+                  );
+                }).length === 0 && (
+                  <div className="px-2 py-6 text-sm text-muted-foreground">No se encontraron resultados.</div>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           <div>
             <label className="block text-sm font-medium mb-2">
               Fecha Inicio
             </label>
-            <input
+            <Input
               type="date"
               value={fechaInicio}
               onChange={(e) => setFechaInicio(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full"
             />
           </div>
 
@@ -313,11 +371,11 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
             <label className="block text-sm font-medium mb-2">
               Fecha Fin
             </label>
-            <input
+            <Input
               type="date"
               value={fechaFin}
               onChange={(e) => setFechaFin(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full"
             />
           </div>
 
@@ -325,15 +383,19 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
             <label className="block text-sm font-medium mb-2">
               Estado
             </label>
-            <select
+            <Select
               value={estado}
-              onChange={(e) => setEstado(e.target.value as 'todos' | 'pendiente' | 'completada')}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:border-transparent"
+              onValueChange={(v: 'todos' | 'pendiente' | 'completada') => setEstado(v)}
             >
-              <option value="todos">Todos</option>
-              <option value="pendiente">Pendientes</option>
-              <option value="completada">Completadas</option>
-            </select>
+              <SelectTrigger>
+                <SelectValue placeholder="Seleccionar estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                <SelectItem value="pendiente">Pendientes</SelectItem>
+                <SelectItem value="completada">Completadas</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 

@@ -26,6 +26,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { togglePrestadorActivo } from "../actions";
 
 type Prestador = {
@@ -205,18 +206,22 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
           value={(table.getColumn("documento")?.getFilterValue() as string) ?? ""}
           onChange={(e) => table.getColumn("documento")?.setFilterValue(e.target.value)}
         />
-        <select
-          className="border rounded px-3 py-2 text-sm"
+        <Select
           value={filterActivo}
-          onChange={(e) => {
-            setFilterActivo(e.target.value as any);
-            table.getColumn("activo")?.setFilterValue(e.target.value);
+          onValueChange={(value) => {
+            setFilterActivo(value as "todos" | "activos" | "inactivos");
+            table.getColumn("activo")?.setFilterValue(value);
           }}
         >
-          <option value="todos">Activo (todos)</option>
-          <option value="activos">Sólo activos</option>
-          <option value="inactivos">Sólo inactivos</option>
-        </select>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Estado" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Activo (todos)</SelectItem>
+            <SelectItem value="activos">Sólo activos</SelectItem>
+            <SelectItem value="inactivos">Sólo inactivos</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <DataTable table={table} isLoading={loading} />

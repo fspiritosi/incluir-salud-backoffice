@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { MapPin, ExternalLink } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 
 // Configura el token de acceso de Mapbox
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
@@ -595,12 +596,12 @@ return (
         </button>
       </div>
       <div className="mt-2 flex gap-2">
-        <input
+        <Input
           type="text"
           value={manualCoords}
           onChange={(e) => setManualCoords(e.target.value)}
           placeholder="-32.889, -68.845"
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="flex-1"
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               handleManualCoords();
