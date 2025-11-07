@@ -1,29 +1,52 @@
-import Link from "next/link";
-import { Button } from "./ui/button";
-import { createClient } from "@/lib/supabase/server";
-import { LogoutButton } from "./logout-button";
+'use client';
 
-export async function AuthButton() {
-  const supabase = await createClient();
+import { createClient } from '@/lib/supabase/client';
+import { useRouter } from 'next/navigation';
+import { Button } from './ui/button';
+import { useEffect, useState } from 'react';
+import { LogOut } from 'lucide-react';
 
-  // You can also use getUser() which will be slower.
-  const { data } = await supabase.auth.getClaims();
+export function AuthButton({ isCollapsed }: { isCollapsed: boolean }) {
+  const supabase = createClient();
+  const router = useRouter();
+  const [user, setUser] = useState<{nombre?: string; apellido?: string} | null>(null);
 
-  const user = data?.claims;
+  useEffect(() => {
+    const getSession = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('nombre, apellido')
+          .eq('id', user.id)
+          .single();
+        setUser(profile);
+      }
+    };
 
-  return user ? (
-    <div className="flex items-center gap-4">
-      Hola, {user.email}!
-      <LogoutButton />
+    getSession();
+  }, [supabase]);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    router.refresh();
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      {!isCollapsed && user && (
+        <span className="text-sm font-medium px-2">
+          Hola, {user.nombre} {user.apellido}!
+        </span>
+      )}
+      <Button 
+        variant={isCollapsed ? "ghost" : "default"}
+        onClick={handleSignOut}
+        size={isCollapsed ? "icon" : "default"}
+        className={isCollapsed ? "w-10 h-10" : "w-32"}
+      >
+        {isCollapsed ? <LogOut className="h-4 w-4" /> : 'Cerrar sesión'}
+      </Button>
     </div>
-  ) : (""
-    // <div className="flex gap-2">
-    //   <Button asChild size="sm" variant={"outline"}>
-    //     <Link href="/auth/login">Iniciar sesión</Link>
-    //   </Button>
-    //   <Button asChild size="sm" variant={"default"}>
-    //     <Link href="/auth/sign-up">Registrarse</Link>
-    //   </Button>
-    // </div>
   );
 }
