@@ -27,6 +27,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { togglePrestadorActivo } from "../actions";
 
 type Prestador = {
   id: string;
