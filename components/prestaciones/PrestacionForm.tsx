@@ -21,6 +21,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 
 type PrestacionFormProps = {
   initialData?: any;
@@ -227,16 +230,20 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
               <FormItem>
                 <FormLabel>Estado</FormLabel>
                 <FormControl>
-                  <select
-                    className="border rounded px-3 py-2 w-full"
+                  <Select
                     value={field.value || 'pendiente'}
-                    onChange={(e) => field.onChange(e.target.value)}
+                    onValueChange={field.onChange}
                     disabled={loading}
                   >
-                    <option value="pendiente">pendiente</option>
-                    <option value="completada">completada</option>
-                    <option value="cancelada">cancelada</option>
-                  </select>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar estado" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pendiente">pendiente</SelectItem>
+                      <SelectItem value="completada">completada</SelectItem>
+                      <SelectItem value="cancelada">cancelada</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -387,7 +394,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
         {!isEditing && (
           <div className="rounded-md border p-4 space-y-4">
             <div className="flex items-center gap-3">
-              <input id="bulkMode" type="checkbox" checked={bulkMode} onChange={(e) => setBulkMode(e.target.checked)} disabled={loading} />
+              <Switch id="bulkMode" checked={bulkMode} onCheckedChange={setBulkMode} disabled={loading} />
               <label htmlFor="bulkMode" className="font-medium">Crear múltiples prestaciones</label>
             </div>
 
@@ -395,16 +402,20 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
               <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-3">
                 <label className="text-sm font-medium">Modo</label>
-                <select
-                  className="border rounded px-2 py-1"
+                <Select
                   value={bulkModeType}
-                  onChange={(e) => setBulkModeType(e.target.value as any)}
+                  onValueChange={(value: 'cada-n' | 'dias-semana' | 'fechas-custom') => setBulkModeType(value)}
                   disabled={loading}
                 >
-                  <option value="cada-n">Cada N días</option>
-                  <option value="dias-semana">Días de la semana</option>
-                  <option value="fechas-custom">Fechas personalizadas</option>
-                </select>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar modo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cada-n">Cada N días</SelectItem>
+                    <SelectItem value="dias-semana">Días de la semana</SelectItem>
+                    <SelectItem value="fechas-custom">Fechas personalizadas</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {bulkModeType === 'cada-n' && (
@@ -445,10 +456,9 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
                       ['lun','Lun'],['mar','Mar'],['mie','Mié'],['jue','Jue'],['vie','Vie'],['sab','Sáb'],['dom','Dom']
                     ].map(([key, label]) => (
                       <label key={key} className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           checked={Boolean(bulkWeekdays[key as keyof typeof bulkWeekdays])}
-                          onChange={(e) => setBulkWeekdays(prev => ({ ...prev, [key]: e.target.checked }))}
+                          onCheckedChange={(checked) => setBulkWeekdays(prev => ({ ...prev, [key]: Boolean(checked) }))}
                           disabled={loading}
                         />
                         {label}

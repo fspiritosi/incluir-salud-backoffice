@@ -42,7 +42,7 @@ export default async function BeneficiariosPage() {
         <h1 className="text-2xl font-bold">Beneficiarios</h1>
         {canCreate ? (
           <Link href="/protected/beneficiarios/crear">
-            <Button>Nuevo</Button>
+            <Button>Nuevo Beneficiario</Button>
           </Link>
         ) : (
           <Button disabled title="No tenés permiso para crear beneficiarios">Nuevo</Button>

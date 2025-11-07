@@ -29,6 +29,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Paciente = {
   id: string;
@@ -244,18 +245,22 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
           value={(table.getColumn("provincia")?.getFilterValue() as string) ?? ""}
           onChange={(e) => table.getColumn("provincia")?.setFilterValue(e.target.value)}
         />
-        <select
-          className="border rounded px-3 py-2 text-sm"
+        <Select
           value={fActivo}
-          onChange={(e) => {
-            setFActivo(e.target.value as any);
-            table.getColumn("activo")?.setFilterValue(e.target.value);
+          onValueChange={(value) => {
+            setFActivo(value as "todos" | "si" | "no");
+            table.getColumn("activo")?.setFilterValue(value);
           }}
         >
-          <option value="todos">Activo (todos)</option>
-          <option value="si">Sólo activos</option>
-          <option value="no">Sólo inactivos</option>
-        </select>
+          <SelectTrigger>
+            <SelectValue placeholder="Activo (todos)" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Activo (todos)</SelectItem>
+            <SelectItem value="si">Sólo activos</SelectItem>
+            <SelectItem value="no">Sólo inactivos</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <DataTable table={table} isLoading={loading} />
