@@ -275,12 +275,12 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Parámetros del Reporte</h2>
+      <div className="rounded-lg shadow p-6 border border-gray-200">
+        <h2 className="text-lg font-semibold mb-4">Parámetros del Reporte</h2>
         
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium mb-2">
               Prestador
             </label>
             <select
@@ -298,7 +298,7 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium mb-2">
               Fecha Inicio
             </label>
             <input
@@ -310,7 +310,7 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium mb-2">
               Fecha Fin
             </label>
             <input
@@ -322,13 +322,13 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium mb-2">
               Estado
             </label>
             <select
               value={estado}
               onChange={(e) => setEstado(e.target.value as 'todos' | 'pendiente' | 'completada')}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:border-transparent"
             >
               <option value="todos">Todos</option>
               <option value="pendiente">Pendientes</option>
@@ -356,9 +356,9 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
       </div>
 
       {reporteData && (
-        <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
+        <div className="rounded-lg shadow p-6 border border-gray-200">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Resultados del Reporte</h2>
+            <h2 className="text-lg font-semibold">Resultados del Reporte</h2>
             <div className="flex gap-2">
               <button
                 onClick={generarPDF}
@@ -378,13 +378,13 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-600">Total de Prestaciones</p>
-              <p className="text-2xl font-bold text-blue-600">{reporteData.totales.cantidad}</p>
+            <div className="bg-card p-4 rounded-lg border shadow-sm dark:shadow-none">
+              <p className="text-sm text-muted-foreground">Total de Prestaciones</p>
+              <p className="text-2xl font-bold">{reporteData.totales.cantidad}</p>
             </div>
-            <div className="bg-green-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-600">Monto Total</p>
-              <p className="text-2xl font-bold text-green-600">
+            <div className="bg-card p-4 rounded-lg border shadow-sm dark:shadow-none">
+              <p className="text-sm text-muted-foreground">Monto Total</p>
+              <p className="text-2xl font-bold text-primary">
                 ${reporteData.totales.monto.toLocaleString("es-AR")}
               </p>
             </div>
@@ -392,31 +392,31 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
 
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="border-b">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paciente</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Monto</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Fecha</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Tipo</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Paciente</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Estado</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Monto</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="divide-y">
                 {reporteData.prestaciones.map((p) => (
-                  <tr key={p.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 text-sm text-gray-900">
+                  <tr key={p.id} className="hover:bg-accent">
+                    <td className="px-4 py-3 text-sm">
                       {new Date(p.fecha).toLocaleDateString("es-AR")}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-900 capitalize">
+                    <td className="px-4 py-3 text-sm capitalize">
                       {p.tipo_prestacion.replace(/_/g, " ")}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-900">
+                    <td className="px-4 py-3 text-sm">
                       {p.paciente ? `${p.paciente.apellido}, ${p.paciente.nombre}` : "N/A"}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-900">
+                    <td className="px-4 py-3 text-sm">
                       {p.estado}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-900">
+                    <td className="px-4 py-3 text-sm">
                       ${(p.monto || 0).toLocaleString("es-AR")}
                     </td>
                   </tr>

@@ -1,3 +1,5 @@
+"use client";
+
 import { DeployButton } from "@/components/deploy-button";
 import { EnvVarWarning } from "@/components/env-var-warning";
 import { AuthButton } from "@/components/auth-button";
@@ -6,12 +8,16 @@ import { hasEnvVars } from "@/lib/utils";
 import Link from "next/link";
 import { Sidebar } from '@/components/sidebar';
 import Image from 'next/image';
+import { cn } from "@/lib/utils";
+import { useState } from "react";
 
 export default function ProtectedLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* Navbar */}
@@ -29,8 +35,11 @@ export default function ProtectedLayout({
 
       {/* Contenido principal con Sidebar */}
       <div className="flex flex-1">
-        <Sidebar />
-        <main className="flex-1 p-5 overflow-auto">
+        <Sidebar isCollapsed={isCollapsed} onToggle={() => setIsCollapsed((v) => !v)} />
+        <main className={cn(
+          "flex-1 p-6 overflow-auto transition-[margin-left] duration-300",
+          isCollapsed ? "ml-16" : "ml-56"
+        )}>
           {children}
         </main>
       </div>

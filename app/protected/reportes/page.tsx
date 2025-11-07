@@ -16,8 +16,8 @@ export default async function ReportesPage() {
   return (
     <div className="flex-1 w-full flex flex-col gap-6 p-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Reportes de Prestaciones</h1>
-        <p className="text-gray-600 mt-1">
+        <h1 className="text-3xl font-bold">Reportes de Prestaciones</h1>
+        <p className="mt-1">
           Genera reportes de prestaciones por prestador y rango de fechas
         </p>
       </div>

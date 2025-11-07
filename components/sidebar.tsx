@@ -1,21 +1,20 @@
 'use client';
-
-import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { LayoutDashboard, UserPlus, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
-import { useBackofficeRoles } from '@/hooks/useBackofficeRoles';
-import { canCreateOrEditPaciente } from '@/utils/permissions';
-import Image from 'next/image';
+import { LayoutDashboard, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { ThemeSwitcher } from '@/components/theme-switcher';
 import { AuthButton } from '@/components/auth-button';
+import Image from 'next/image';
 
-export function Sidebar() {
+type SidebarProps = {
+  isCollapsed: boolean;
+  onToggle: () => void;
+};
+
+export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
-  const [isCollapsed, setIsCollapsed] = useState(false);
-  const { roles, loading } = useBackofficeRoles();
-  const canCreateBenef = canCreateOrEditPaciente(roles);
 
   const menuItems = [
     {
@@ -28,21 +27,10 @@ export function Sidebar() {
       href: '/protected/beneficiarios',
       icon: Users,
     },
-    // Crear Beneficiario: solo si tiene permiso
-    // canCreateBenef ? {
-    //   name: 'Crear Beneficiario',
-    //   href: '/protected/beneficiarios/crear',
-    //   icon: UserPlus,
-    // } : null,
     {
       name: 'Prestaciones',
       href: '/protected/prestaciones',
       icon: ClipboardList,
-    },
-    {
-      name: 'Prestadores',
-      href: '/protected/prestadores',
-      icon: Stethoscope,
     },
     {
       name: 'Reportes',
@@ -53,61 +41,87 @@ export function Sidebar() {
 
   return (
     <div className={cn(
-      "hidden border-r bg-muted/40 md:block transition-all duration-300",
-      isCollapsed ? "w-16" : "w-48"
+      "fixed left-0 top-0 h-screen border-r bg-background transition-all duration-300 z-20",
+      isCollapsed ? "w-16" : "w-56"
     )}>
-      <div className="flex h-full max-h-screen flex-col gap-2"> 
-        {/* Botón de colapsar */}
-        <div className="flex justify-end p-2">
-          <button
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            className="p-2 rounded-lg hover:bg-muted transition-colors"
-            title={isCollapsed ? "Expandir sidebar" : "Colapsar sidebar"}
-          >
-            {isCollapsed ? (
-              <ChevronRight className="h-4 w-4" />
-            ) : (
-              <ChevronLeft className="h-4 w-4" />
-            )}
-          </button>
-          
+      <div className="flex h-full flex-col gap-4">
+        <div className={cn(
+          "p-4",
+          isCollapsed ? "flex flex-col gap-2" : "flex items-center justify-between"
+        )}>
+          {isCollapsed ? (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onToggle}
+                className="h-8 w-8 self-end"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Link href="/protected" className="flex justify-center">
+                <div className="p-1 rounded-lg bg-primary/10">
+                  <Image 
+                    src="/images/logoIncluirTransparente.png" 
+                    alt="Logo" 
+                    width={32} 
+                    height={32}
+                    className="rounded-md"
+                  />
+                </div>
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link href="/protected" className="flex items-center gap-2">
+                <div className="p-1 rounded-lg bg-primary/10">
+                  <Image 
+                    src="/images/logoIncluirTransparente.png" 
+                    alt="Logo" 
+                    width={32} 
+                    height={32}
+                    className="rounded-md"
+                  />
+                </div>
+                <span className="text-lg font-semibold">Incluir Salud</span>
+              </Link>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onToggle}
+                className="h-8 w-8"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+            </>
+          )}
         </div>
 
-        <div className="flex-1">
-          
-          <nav className="grid items-start px-2 text-sm font-medium lg:px-4 py-4 space-y-1">
-            
-             <div className="font-semibold">
-          <Link href={"/protected"}>
-            <Image src="/images/logoIncluirTransparente.png" alt="Logo" width={40} height={40} />
-          </Link>
-          <AuthButton isCollapsed={isCollapsed} />
-           <div className="flex items-center gap-4">
-          <ThemeSwitcher />
-         
-          {/* {!hasEnvVars ? <EnvVarWarning /> : <AuthButton />} */}
-        </div>
-        </div>
-            {menuItems.filter(Boolean).map((item: any) => {
-              const isActive = pathname === item.href;
-              return (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  className={cn(
-                    'flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:bg-muted',
-                    isActive && 'bg-muted text-primary',
-                    isCollapsed && 'justify-center'
-                  )}
-                  title={isCollapsed ? item.name : undefined}
-                >
-                  <item.icon className="h-4 w-4 flex-shrink-0" />
-                  {!isCollapsed && <span>{item.name}</span>}
-                </Link>
-              );
-            })}
-             
+        <div className="flex-1 overflow-y-auto px-2">
+          <nav className="grid gap-1">
+            {menuItems.map((item) => (
+              <Link
+                key={item.name}
+                href={item.href}
+                className={cn(
+                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all",
+                  pathname === item.href ? "bg-muted text-primary" : "text-muted-foreground hover:bg-muted/50",
+                  isCollapsed && "justify-center"
+                )}
+                title={isCollapsed ? item.name : undefined}
+              >
+                <item.icon className="h-4 w-4" />
+                {!isCollapsed && item.name}
+              </Link>
+            ))}
           </nav>
+        </div>
+
+        <div className="p-4">
+          <div className="flex flex-col gap-2">
+            <ThemeSwitcher />
+            <AuthButton isCollapsed={isCollapsed} />
+          </div>
         </div>
       </div>
     </div>
