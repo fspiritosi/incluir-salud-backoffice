@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { 
   ColumnDef,
@@ -16,7 +16,7 @@ import {
 } from "@tanstack/react-table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Pencil, MoreHorizontalIcon } from "lucide-react";
+import { Pencil, MoreHorizontalIcon, XCircle } from "lucide-react";
 import { DataTable } from "@/components/ui/data-table";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
@@ -28,6 +28,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { cancelPrestacion } from "@/app/protected/prestaciones/actions";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/components/ui/use-toast";
 
 export type PrestacionRow = {
   id: string;
@@ -53,6 +57,8 @@ export type PrestacionRow = {
 export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
   const { roles, loading } = useBackofficeRoles();
   const canWritePrestaciones = canCreateOrEditPrestacion(roles);
+  const { toast } = useToast();
+  const [isPending, startTransition] = useTransition();
   
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -84,7 +90,18 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
     {
       accessorKey: "estado",
       header: "Estado",
-      cell: ({ row }) => row.getValue("estado") || "-",
+      cell: ({ row }) => {
+        const raw = (row.getValue("estado") as string | null) || "-";
+        const val = raw.toLowerCase();
+        let cls = "";
+        if (val === "completada") cls = "bg-green-100 text-green-800 border-green-200";
+        else if (val === "pendiente") cls = "bg-yellow-100 text-yellow-800 border-yellow-200";
+        else if (val === "cancelada") cls = "bg-red-100 text-red-800 border-red-200";
+        else cls = "bg-muted text-foreground";
+        return (
+          <Badge variant="outline" className={`${cls} capitalize`}>{raw}</Badge>
+        );
+      },
       meta: {
         filterType: "select",
         options: ["pendiente", "completada", "cancelada", "todos"]
@@ -141,14 +158,9 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
       header: "Acciones",
       cell: ({ row }) => {
         const prestacion = row.original;
-        return (
-          canWritePrestaciones && !loading ? (
-            <Link href={`/protected/prestaciones/editar/${prestacion.id}`} aria-label="Editar">
-              <Button size="icon" variant="outline">
-                <Pencil className="h-4 w-4" />
-              </Button>
-            </Link>
-          ) : (
+        const estado = (prestacion.estado || '').toLowerCase();
+        if (!canWritePrestaciones || loading) {
+          return (
             <Button
               size="icon"
               variant="outline"
@@ -158,8 +170,70 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
             >
               <Pencil className="h-4 w-4" />
             </Button>
-          )
-        );
+          );
+        }
+        // Solo acciones para pendientes
+        if (estado === 'pendiente') {
+          return (
+            <div className="flex items-center gap-2">
+              <Link href={`/protected/prestaciones/editar/${prestacion.id}`} aria-label="Editar">
+                <Button size="icon" variant="outline">
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              </Link>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button size="icon" variant="destructive" aria-label="Cancelar prestación">
+                    <XCircle className="h-4 w-4" />
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Cancelar prestación</DialogTitle>
+                    <DialogDescription>
+                      Esta acción cambiará el estado a <b>cancelada</b>. ¿Deseás continuar?
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter className="sm:justify-end">
+                    <div className="flex items-center gap-2">
+                      <DialogClose asChild>
+                        <Button type="button" variant="outline">Cancelar</Button>
+                      </DialogClose>
+                      <DialogClose asChild>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          disabled={isPending}
+                          onClick={() => {
+                            startTransition(async () => {
+                              const { error } = await cancelPrestacion(prestacion.id);
+                              if (error) {
+                                toast({
+                                  title: "No se pudo cancelar",
+                                  description: error.message || "Intentalo nuevamente",
+                                  variant: "destructive",
+                                });
+                              } else {
+                                toast({
+                                  title: "Prestación cancelada",
+                                  description: "La prestación pasó a estado cancelada.",
+                                });
+                              }
+                            });
+                          }}
+                        >
+                          {isPending ? "Cancelando..." : "Confirmar"}
+                        </Button>
+                      </DialogClose>
+                    </div>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
+          );
+        }
+        // Para completadas o canceladas: sin acciones de edición/cancelación
+        return null;
       },
     },
   ];

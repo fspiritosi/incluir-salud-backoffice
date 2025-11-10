@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { revalidatePath } from "next/cache";
 
 export type PrestacionInput = {
   tipo_prestacion: string; // enum in DB
@@ -227,7 +228,7 @@ export async function listPacientesForSelect() {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("pacientes")
-    .select("id, nombre, apellido")
+    .select("id, nombre, apellido, documento")
     .order("apellido", { ascending: true });
   return { data, error } as { data: { id: string; nombre: string; apellido: string }[] | null; error: any };
 }
@@ -239,4 +240,26 @@ export async function listObrasSocialesForSelect() {
     .select("id, nombre")
     .order("nombre", { ascending: true });
   return { data, error } as { data: { id: string; nombre: string }[] | null; error: any };
+}
+
+export async function cancelPrestacion(id: string) {
+  const supabase = await createClient();
+  // Solo cancelar si está en estado pendiente
+  const { data, error } = await supabase
+    .from('prestaciones')
+    .update({ estado: 'cancelada' })
+    .eq('id', id)
+    .eq('estado', 'pendiente')
+    .select('id')
+    .single();
+  if (!error) {
+    revalidatePath('/protected/prestaciones');
+  }
+  return { data, error } as const;
+}
+
+export async function cancelPrestacionAction(formData: FormData): Promise<void> {
+  const id = String(formData.get('id') || '');
+  if (!id) return;
+  await cancelPrestacion(id);
 }

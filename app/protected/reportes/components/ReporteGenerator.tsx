@@ -1,8 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import { FileDown, FileSpreadsheet, Loader2, ChevronsUpDown, Check } from "lucide-react";
-import { getPrestacionesReporte } from "../actions";
+import { useState, useEffect } from "react";
+import {
+  FileDown,
+  FileSpreadsheet,
+  Loader2,
+  ChevronsUpDown,
+  Check,
+} from "lucide-react";
+import {
+  getPrestacionesReporte,
+  getPacientesDePrestador,
+  getTiposPrestacionDePrestador,
+} from "../actions";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -14,8 +24,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type Prestador = {
   id: string;
@@ -39,7 +54,7 @@ type ReporteData = {
     fecha: string;
     monto: number | null;
     descripcion: string | null;
-    estado: 'pendiente' | 'completada';
+    estado: "pendiente" | "completada";
     paciente: {
       nombre: string;
       apellido: string;
@@ -52,15 +67,61 @@ type ReporteData = {
   };
 };
 
-export default function ReporteGenerator({ prestadores }: { prestadores: Prestador[] }) {
+export default function ReporteGenerator({
+  prestadores,
+}: {
+  prestadores: Prestador[];
+}) {
   const [prestadorId, setPrestadorId] = useState("");
   const [prestadorOpen, setPrestadorOpen] = useState(false);
   const [prestadorFilter, setPrestadorFilter] = useState("");
+  const [pacienteIds, setPacienteIds] = useState<string[]>([]);
+  const [pacienteOpen, setPacienteOpen] = useState(false);
+  const [pacienteFilter, setPacienteFilter] = useState("");
+  const [pacientes, setPacientes] = useState<
+    { id: string; nombre: string; apellido: string; documento?: string }[]
+  >([]);
+  const [tiposPrestacionOpts, setTiposPrestacionOpts] = useState<string[]>([]);
+  const [tiposPrestacionSel, setTiposPrestacionSel] = useState<string[]>([]);
+  const [tiposOpen, setTiposOpen] = useState(false);
+  const [tiposFilter, setTiposFilter] = useState("");
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
-  const [estado, setEstado] = useState<'todos' | 'pendiente' | 'completada'>('todos');
+  const [estado, setEstado] = useState<"todos" | "pendiente" | "completada">(
+    "todos"
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [reporteData, setReporteData] = useState<ReporteData | null>(null);
+
+  // Cargar pacientes y resetear tipos cuando cambia el prestador
+  useEffect(() => {
+    setPacienteIds([]);
+    setPacientes([]);
+    setPacienteFilter("");
+    setTiposPrestacionSel([]);
+    setTiposPrestacionOpts([]);
+    setTiposFilter("");
+    if (!prestadorId) return;
+    (async () => {
+      const list = await getPacientesDePrestador(prestadorId);
+      setPacientes(list);
+    })();
+  }, [prestadorId]);
+
+  // Cargar tipos cuando cambian prestador o pacientes seleccionados
+  useEffect(() => {
+    if (!prestadorId) return;
+    (async () => {
+      const tipos = await getTiposPrestacionDePrestador(
+        prestadorId,
+        pacienteIds.length > 0 ? pacienteIds : undefined
+      );
+      const opts = tipos || [];
+      setTiposPrestacionOpts(opts);
+      // Prune selección de tipos no disponibles
+      setTiposPrestacionSel((prev) => prev.filter((t) => opts.includes(t)));
+    })();
+  }, [prestadorId, pacienteIds]);
 
   const handleGenerarReporte = async () => {
     if (!prestadorId || !fechaInicio || !fechaFin) {
@@ -71,19 +132,21 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
     // Asegurar formato YYYY-MM-DD
     const formatDate = (dateStr: string) => {
       const date = new Date(dateStr);
-      const iso = date.toISOString().split('T')[0];
+      const iso = date.toISOString().split("T")[0];
       return iso;
     };
 
     setIsLoading(true);
     try {
       const { data, error } = await getPrestacionesReporte(
-        prestadorId, 
+        prestadorId,
         formatDate(fechaInicio),
         formatDate(fechaFin),
-        estado === 'todos' ? undefined : estado
+        estado === "todos" ? undefined : estado,
+        pacienteIds.length > 0 ? pacienteIds : undefined,
+        tiposPrestacionSel.length > 0 ? tiposPrestacionSel : undefined
       );
-      
+
       if (error || !data) {
         alert("Error al generar el reporte");
         return;
@@ -103,9 +166,9 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
 
     // Configurar documento con tipo extendido
     const doc = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4'
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
     }) as jsPDF & {
       lastAutoTable: { finalY: number };
       internal: {
@@ -113,17 +176,17 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
         pageSize: { height: number; width: number };
       };
     };
-    
+
     const { prestador, prestaciones, totales } = reporteData;
 
     // Margen izquierdo
     const marginLeft = 15;
-    
+
     // Encabezado
     doc.setFontSize(18);
     doc.setFont("helvetica", "bold");
     doc.text("REPORTE DE PRESTACIONES", 105, 20, { align: "center" });
-    
+
     doc.setFontSize(14);
     doc.text("INCLUIR SALUD", 105, 28, { align: "center" });
 
@@ -131,21 +194,29 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
     doc.setFontSize(11);
     doc.setFont("helvetica", "bold");
     doc.text("DATOS DEL PRESTADOR", marginLeft, 45);
-    
+
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    doc.text(`Nombre: ${prestador.apellido}, ${prestador.nombre}`, marginLeft, 52);
+    doc.text(
+      `Nombre: ${prestador.apellido}, ${prestador.nombre}`,
+      marginLeft,
+      52
+    );
     doc.text(`Documento: ${prestador.documento || "N/A"}`, marginLeft, 58);
     doc.text(`Email: ${prestador.email || "N/A"}`, marginLeft, 64);
     doc.text(`Teléfono: ${prestador.telefono || "N/A"}`, marginLeft, 70);
 
     // Función para formatear fecha YYYY-MM-DD a DD-MM-YYYY
     const formatToDMY = (fechaISO: string) => {
-      const [year, month, day] = fechaISO.split('-')
+      const [year, month, day] = fechaISO.split("-");
       return `${day}-${month}-${year}`;
     };
 
-    doc.text(`Período: ${formatToDMY(fechaInicio)} al ${formatToDMY(fechaFin)}`, marginLeft, 76);
+    doc.text(
+      `Período: ${formatToDMY(fechaInicio)} al ${formatToDMY(fechaFin)}`,
+      marginLeft,
+      76
+    );
 
     // Tabla
     const tableData = prestaciones.map((p) => [
@@ -159,15 +230,15 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
 
     // Pre-calcular total de páginas (método alternativo)
     const tempDoc = new jsPDF();
-    
+
     // Calcular altura total requerida
     const rowHeight = 10; // Altura estimada por fila
     const headerHeight = 15;
-    const totalHeight = headerHeight + (tableData.length * rowHeight);
-    
+    const totalHeight = headerHeight + tableData.length * rowHeight;
+
     // Calcular espacio disponible por página (A4)
     const pageHeight = tempDoc.internal.pageSize.height - 100; // Margen superior e inferior
-    
+
     // Calcular total de páginas
     const totalPages = Math.ceil(totalHeight / pageHeight);
 
@@ -195,19 +266,25 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
         4: { cellWidth: 28 },
         5: { cellWidth: 25, halign: "right" },
       },
-      didDrawPage: function(data: any) {
+      didDrawPage: function (data: any) {
         const footerY = doc.internal.pageSize.height - 10;
         doc.setFontSize(8);
         doc.setTextColor(100);
-        
+
         // Texto de generación alineado izquierda
         const now = new Date();
         doc.text(
-          `Generado: ${now.toLocaleDateString('es-AR')} ${now.toLocaleTimeString('es-AR', {hour: '2-digit', minute:'2-digit', hour12: false})} por ${prestador.apellido}, ${prestador.nombre}`,
+          `Generado: ${now.toLocaleDateString(
+            "es-AR"
+          )} ${now.toLocaleTimeString("es-AR", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          })} por ${prestador.apellido}, ${prestador.nombre}`,
           data.settings.margin.left,
           footerY
         );
-        
+
         // Paginación alineada derecha
         doc.text(
           `Página ${data.pageNumber} de ${totalPages}`,
@@ -215,7 +292,7 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
           footerY,
           { align: "right" }
         );
-      }
+      },
     });
 
     // Totales
@@ -223,7 +300,11 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.text(`Total de Prestaciones: ${totales.cantidad}`, marginLeft, finalY);
-    doc.text(`Monto Total: $${totales.monto.toLocaleString("es-AR")}`, marginLeft, finalY + 7);
+    doc.text(
+      `Monto Total: $${totales.monto.toLocaleString("es-AR")}`,
+      marginLeft,
+      finalY + 7
+    );
 
     // Guardar
     const fileName = `Reporte_${prestador.apellido}_${fechaInicio}_${fechaFin}.pdf`;
@@ -264,7 +345,11 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
       ["Monto Total:", totales.monto],
     ];
 
-    const worksheetData = [...prestadorInfo, ...prestacionesData, ...totalesData];
+    const worksheetData = [
+      ...prestadorInfo,
+      ...prestacionesData,
+      ...totalesData,
+    ];
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(worksheetData);
@@ -288,26 +373,28 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
     <div className="space-y-6">
       <div className="rounded-lg shadow p-6 border border-gray-200">
         <h2 className="text-lg font-semibold mb-4">Parámetros del Reporte</h2>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <label className="block text-sm font-medium mb-2">
-              Prestador
-            </label>
+            <label className="block text-sm font-medium mb-2">Prestador</label>
             <DropdownMenu open={prestadorOpen} onOpenChange={setPrestadorOpen}>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
                   role="combobox"
                   aria-expanded={prestadorOpen}
-                  className="w-full justify-between"
+                  className="w-full justify-between overflow-hidden text-left"
                 >
-                  {(() => {
-                    const p = prestadores.find((x) => x.id === prestadorId);
-                    return p
-                      ? `${p.apellido}, ${p.nombre}${p.documento ? ` (${p.documento})` : ""}`
-                      : "Seleccionar prestador...";
-                  })()}
+                  <span className="truncate">
+                    {(() => {
+                      const p = prestadores.find((x) => x.id === prestadorId);
+                      return p
+                        ? `${p.apellido}, ${p.nombre}${
+                            p.documento ? ` (${p.documento})` : ""
+                          }`
+                        : "Seleccionar prestador...";
+                    })()}
+                  </span>
                   <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
                 </Button>
               </DropdownMenuTrigger>
@@ -327,7 +414,9 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
                     );
                   })
                   .map((p) => {
-                    const label = `${p.apellido}, ${p.nombre}${p.documento ? ` (${p.documento})` : ""}`;
+                    const label = `${p.apellido}, ${p.nombre}${
+                      p.documento ? ` (${p.documento})` : ""
+                    }`;
                     return (
                       <DropdownMenuItem
                         key={p.id}
@@ -337,7 +426,11 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
                         }}
                         className="flex items-center gap-2"
                       >
-                        <Check className={`h-4 w-4 ${prestadorId === p.id ? "opacity-100" : "opacity-0"}`} />
+                        <Check
+                          className={`h-4 w-4 ${
+                            prestadorId === p.id ? "opacity-100" : "opacity-0"
+                          }`}
+                        />
                         {label}
                       </DropdownMenuItem>
                     );
@@ -349,12 +442,251 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
                     (p.documento || "").toLowerCase().includes(q)
                   );
                 }).length === 0 && (
-                  <div className="px-2 py-6 text-sm text-muted-foreground">No se encontraron resultados.</div>
+                  <div className="px-2 py-6 text-sm text-muted-foreground">
+                    No se encontraron resultados.
+                  </div>
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
 
+          <div>
+            <label className="block text-sm font-medium mb-2">Paciente</label>
+            <DropdownMenu open={pacienteOpen} onOpenChange={setPacienteOpen}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={pacienteOpen}
+                  className="w-full justify-between overflow-hidden text-left"
+                  disabled={!prestadorId}
+                >
+                  <span className="truncate">
+                    {(() => {
+                      if (!prestadorId)
+                        return "Seleccioná un prestador primero";
+                      if (pacienteIds.length === 0)
+                        return "Todos los pacientes";
+                      if (pacienteIds.length === 1) {
+                        const p = pacientes.find(
+                          (x) => x.id === pacienteIds[0]
+                        );
+                        return p
+                          ? `${p.apellido}, ${p.nombre}${
+                              p.documento ? ` (${p.documento})` : ""
+                            }`
+                          : "1 paciente";
+                      }
+                      return `${pacienteIds.length} pacientes seleccionados`;
+                    })()}
+                  </span>
+                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width] p-2">
+                <Input
+                  placeholder="Buscar por nombre o DNI..."
+                  value={pacienteFilter}
+                  onChange={(e) => setPacienteFilter(e.target.value)}
+                  className="mb-2"
+                  disabled={!prestadorId}
+                />
+                {/* Opción: todos los pacientes */}
+                <DropdownMenuItem
+                  disabled={!prestadorId}
+                  onClick={() => {
+                    setPacienteIds([]);
+                    setPacienteOpen(false);
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <Check
+                    className={`h-4 w-4 ${
+                      pacienteIds.length === 0 ? "opacity-100" : "opacity-0"
+                    }`}
+                  />
+                  Todos los pacientes
+                </DropdownMenuItem>
+                {pacientes
+                  .filter((p) => {
+                    const q = pacienteFilter.toLowerCase().trim();
+                    const qDigits = q.replace(/\D/g, "");
+                    const fullName = `${p.apellido} ${p.nombre}`.toLowerCase();
+                    const doc = (p.documento || "").toLowerCase();
+                    const docDigits = doc.replace(/\D/g, "");
+                    return (
+                      fullName.includes(q) ||
+                      (qDigits.length > 0 && docDigits.includes(qDigits)) ||
+                      doc.includes(q)
+                    );
+                  })
+                  .map((p) => {
+                    const label = `${p.apellido}, ${p.nombre}${
+                      p.documento ? ` (${p.documento})` : ""
+                    }`;
+                    return (
+                      <DropdownMenuItem
+                        key={p.id}
+                        onSelect={(e) => {
+                          e.preventDefault();
+                          setPacienteIds((prev) => {
+                            const exists = prev.includes(p.id);
+                            const next = exists
+                              ? prev.filter((id) => id !== p.id)
+                              : [...prev, p.id];
+                            return next;
+                          });
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <Check
+                          className={`h-4 w-4 ${
+                            pacienteIds.includes(p.id)
+                              ? "opacity-100"
+                              : "opacity-0"
+                          }`}
+                        />
+                        {label}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                {prestadorId &&
+                  pacientes.filter((p) => {
+                    const q = pacienteFilter.toLowerCase();
+                    return (
+                      `${p.apellido} ${p.nombre}`.toLowerCase().includes(q) ||
+                      (p.documento || "").toLowerCase().includes(q)
+                    );
+                  }).length === 0 && (
+                    <div className="px-2 py-6 text-sm text-muted-foreground">
+                      No se encontraron resultados.
+                    </div>
+                  )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">
+              Tipo de prestación
+            </label>
+            <DropdownMenu open={tiposOpen} onOpenChange={setTiposOpen}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={tiposOpen}
+                  className="w-full justify-between overflow-hidden text-left"
+                  disabled={!prestadorId || pacienteIds.length === 0}
+                >
+                  <span className="truncate">
+                    {(() => {
+                      if (!prestadorId)
+                        return "Seleccioná un prestador primero";
+                      if (pacienteIds.length === 0)
+                        return "Seleccioná pacientes primero";
+                      if (tiposPrestacionSel.length === 0)
+                        return "Todos los tipos";
+                      if (tiposPrestacionSel.length === 1) {
+                        const t = tiposPrestacionSel[0];
+                        return t.replace(/_/g, " ");
+                      }
+                      return `${tiposPrestacionSel.length} tipos seleccionados`;
+                    })()}
+                  </span>
+                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width] p-2">
+                <Input
+                  placeholder="Buscar tipo..."
+                  value={tiposFilter}
+                  onChange={(e) => setTiposFilter(e.target.value)}
+                  className="mb-2"
+                  disabled={!prestadorId || pacienteIds.length === 0}
+                />
+                {/* Opción: todos los tipos */}
+                <DropdownMenuItem
+                  disabled={!prestadorId || pacienteIds.length === 0}
+                  onClick={() => {
+                    setTiposPrestacionSel([]);
+                    setTiposOpen(false);
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <Check
+                    className={`h-4 w-4 ${
+                      tiposPrestacionSel.length === 0
+                        ? "opacity-100"
+                        : "opacity-0"
+                    }`}
+                  />
+                  Todos los tipos
+                </DropdownMenuItem>
+                {tiposPrestacionOpts
+                  .filter((t) => {
+                    const label = t.replace(/_/g, " ").toLowerCase();
+                    const q = tiposFilter.toLowerCase().trim();
+                    return label.includes(q);
+                  })
+                  .map((t) => {
+                    const label = t.replace(/_/g, " ");
+                    const selected = tiposPrestacionSel.includes(t);
+                    return (
+                      <DropdownMenuItem
+                        key={t}
+                        onSelect={(e) => {
+                          e.preventDefault();
+                          setTiposPrestacionSel((prev) => {
+                            return prev.includes(t)
+                              ? prev.filter((x) => x !== t)
+                              : [...prev, t];
+                          });
+                        }}
+                        className="flex items-center gap-2 capitalize"
+                      >
+                        <Check
+                          className={`h-4 w-4 ${
+                            selected ? "opacity-100" : "opacity-0"
+                          }`}
+                        />
+                        {label}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                {prestadorId &&
+                  pacienteIds.length > 0 &&
+                  tiposPrestacionOpts.filter((t) =>
+                    t
+                      .replace(/_/g, " ")
+                      .toLowerCase()
+                      .includes(tiposFilter.toLowerCase().trim())
+                  ).length === 0 && (
+                    <div className="px-2 py-6 text-sm text-muted-foreground">
+                      No se encontraron resultados.
+                    </div>
+                  )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Estado</label>
+            <Select
+              value={estado}
+              onValueChange={(v: "todos" | "pendiente" | "completada") =>
+                setEstado(v)
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Seleccionar estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                <SelectItem value="pendiente">Pendientes</SelectItem>
+                <SelectItem value="completada">Completadas</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div>
             <label className="block text-sm font-medium mb-2">
               Fecha Inicio
@@ -368,34 +700,13 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-2">
-              Fecha Fin
-            </label>
+            <label className="block text-sm font-medium mb-2">Fecha Fin</label>
             <Input
               type="date"
               value={fechaFin}
               onChange={(e) => setFechaFin(e.target.value)}
               className="w-full"
             />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              Estado
-            </label>
-            <Select
-              value={estado}
-              onValueChange={(v: 'todos' | 'pendiente' | 'completada') => setEstado(v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Seleccionar estado" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="todos">Todos</SelectItem>
-                <SelectItem value="pendiente">Pendientes</SelectItem>
-                <SelectItem value="completada">Completadas</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         </div>
 
@@ -441,8 +752,12 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <div className="bg-card p-4 rounded-lg border shadow-sm dark:shadow-none">
-              <p className="text-sm text-muted-foreground">Total de Prestaciones</p>
-              <p className="text-2xl font-bold">{reporteData.totales.cantidad}</p>
+              <p className="text-sm text-muted-foreground">
+                Total de Prestaciones
+              </p>
+              <p className="text-2xl font-bold">
+                {reporteData.totales.cantidad}
+              </p>
             </div>
             <div className="bg-card p-4 rounded-lg border shadow-sm dark:shadow-none">
               <p className="text-sm text-muted-foreground">Monto Total</p>
@@ -456,11 +771,21 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
             <table className="w-full">
               <thead className="border-b">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Fecha</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Tipo</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Paciente</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Estado</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Monto</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
+                    Fecha
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
+                    Tipo
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
+                    Paciente
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
+                    Estado
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
+                    Monto
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -473,11 +798,11 @@ export default function ReporteGenerator({ prestadores }: { prestadores: Prestad
                       {p.tipo_prestacion.replace(/_/g, " ")}
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      {p.paciente ? `${p.paciente.apellido}, ${p.paciente.nombre}` : "N/A"}
+                      {p.paciente
+                        ? `${p.paciente.apellido}, ${p.paciente.nombre}`
+                        : "N/A"}
                     </td>
-                    <td className="px-4 py-3 text-sm">
-                      {p.estado}
-                    </td>
+                    <td className="px-4 py-3 text-sm">{p.estado}</td>
                     <td className="px-4 py-3 text-sm">
                       ${(p.monto || 0).toLocaleString("es-AR")}
                     </td>

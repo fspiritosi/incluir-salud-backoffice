@@ -369,16 +369,28 @@ export function MapboxLocationPicker({
               }
             }
 
-            // Opción A: centrar en el mejor candidato por ciudad/calle SIN colocar marcador
+            // Opción A: elegir el mejor candidato por ciudad/calle y COLOCAR marcador para permitir ajuste manual
             const best = rows.find(r => r.matchesCityExact && r.matchesStreet) 
                       || rows.find(r => r.matchesCityExact) 
                       || rows.find(r => r.matchesStreet) 
                       || (features[0] ? { raw: features[0] } as any : null);
             if (best && map.current) {
               const [lngB, latB] = (best.raw as any).center;
-              map.current.flyTo({ center: [lngB, latB], zoom: 14 });
+              map.current.flyTo({ center: [lngB, latB], zoom: 16 });
+              if (marker.current) {
+                marker.current.setLngLat([lngB, latB]);
+              } else {
+                marker.current = new mapboxgl.Marker({ draggable: true })
+                  .setLngLat([lngB, latB])
+                  .addTo(map.current);
+                marker.current.on('dragend', () => {
+                  const pos = marker.current!.getLngLat();
+                  userHasManuallyPlaced.current = true;
+                  onLocationSelect({ lng: pos.lng, lat: pos.lat });
+                });
+              }
+              onLocationSelect({ lng: lngB, lat: latB });
             }
-            // No auto-seleccionar ubicación; el usuario puede validar con Google Maps o clickear el mapa
             return;
           }
 
@@ -437,7 +449,8 @@ useEffect(() => {
   const coerced = coerceLngLat(initialLocation);
   
   if (!coerced) return;
-  if (!map.current) return;
+  // Esperar a que el mapa esté listo
+  if (loading || !map.current) return;
   
   // Check if this location was already loaded
   const locationKey = `${coerced.lng},${coerced.lat}`;
@@ -465,7 +478,7 @@ useEffect(() => {
       onLocationSelect({ lng: pos.lng, lat: pos.lat });
     });
   }
-}, [initialLocation, map.current]);
+}, [initialLocation, loading]);
 
 const handleOpenGoogleMaps = (e: React.MouseEvent) => {
   // Prevenir la propagación del evento para que no afecte al formulario
@@ -474,30 +487,28 @@ const handleOpenGoogleMaps = (e: React.MouseEvent) => {
 
   // Obtener la mejor fuente de ubicación disponible
   let query = '';
-  
+  // Siempre usar texto de dirección proveniente del formulario/campos
   if (address && address.trim().length > 0) {
     query = address.trim();
   } else if (failedAddress && failedAddress.trim().length > 0) {
+    // Si la geocodificación falló, usar el último intento textual
     query = failedAddress.trim();
-  } else if (marker.current) {
-    const pos = marker.current.getLngLat();
-    query = `${pos.lat},${pos.lng}`;
   }
 
   if (!query) {
-    alert('No hay dirección o ubicación seleccionada para buscar');
+    alert('No hay dirección para buscar. Completá los campos de dirección.');
+    return;
+  }
+
+  // Nunca enviar coordenadas: si el texto parece "lat, lng", bloquear
+  const coordsLike = /^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/;
+  if (coordsLike.test(query)) {
+    alert('Solo se permite buscar por dirección textual, no por coordenadas.');
     return;
   }
 
   // Construir URL adecuada
-  let googleMapsUrl;
-  const coordsPattern = /^\s*-?\d+\.\d+\s*,\s*-?\d+\.\d+\s*$/;
-  
-  if (query.match(coordsPattern)) {
-    googleMapsUrl = `https://www.google.com/maps?q=${query}`;
-  } else {
-    googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
-  }
+  const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 
   // Método más confiable para abrir en nueva pestaña
   try {
