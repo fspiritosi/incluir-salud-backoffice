@@ -5,18 +5,25 @@ import { cache } from 'react';
 
 export const getDashboardStats = cache(async () => {
   const supabase = await createClient();
-  // Rango de hoy en hora local (00:00:00 -> 23:59:59.999)
-  const now = new Date();
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
+  // Hoy en Buenos Aires (YYYY-MM-DD) y rango con offset -03:00
+  const parts = new Intl.DateTimeFormat('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const y = parts.find(p => p.type === 'year')!.value;
+  const m = parts.find(p => p.type === 'month')!.value;
+  const d = parts.find(p => p.type === 'day')!.value;
+  const todayBA = `${y}-${m}-${d}`;
+  const startBA = `${todayBA}T00:00:00-03:00`;
+  const endBA = `${todayBA}T23:59:59.999-03:00`;
 
   const { data: prestacionesHoy } = await supabase
     .from('prestaciones')
     .select('*')
-    .gte('fecha', start.toISOString())
-    .lte('fecha', end.toISOString());
+    .gte('fecha', startBA)
+    .lte('fecha', endBA);
 
   const total = prestacionesHoy?.length || 0;
   const completadas = prestacionesHoy?.filter(p => p.estado === 'completada').length || 0;
