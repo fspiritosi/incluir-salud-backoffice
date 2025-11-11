@@ -23,6 +23,24 @@ function getAdminSupabase() {
   return createAdminClient(url, serviceKey);
 }
 
+// Filtrar prestadores por especialidad que debe coincidir con el tipo de prestación seleccionado
+export async function listPrestadoresByEspecialidad(especialidad: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, nombre, apellido, documento')
+    .eq('tipo_usuario', 'prestador')
+    .eq('activo', true)
+    .eq('especialidad', especialidad)
+    .order('apellido', { ascending: true })
+    .order('nombre', { ascending: true });
+  if (error) {
+    console.error('Error listando prestadores por especialidad:', error);
+    return { data: [] as { id: string; apellido: string; nombre: string; documento?: string }[], error };
+  }
+  return { data: (data || []) as { id: string; apellido: string; nombre: string; documento?: string }[], error: null };
+}
+
 export async function listPrestadoresForSelect() {
   const supabase = await createClient();
   

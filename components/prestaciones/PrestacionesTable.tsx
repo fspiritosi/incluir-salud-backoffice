@@ -80,11 +80,13 @@ export function PrestacionesTable({ data }: { data: PrestacionRow[] }) {
       filterFn: (row, columnId, filterValues) => {
         const fecha = new Date(row.getValue(columnId));
         const [inicio, fin] = filterValues as [string, string];
-        
+        const toStart = (d: string) => new Date(`${d}T00:00:00`);
+        const toEnd = (d: string) => new Date(`${d}T23:59:59.999`);
+
         if (!inicio && !fin) return true;
-        if (inicio && !fin) return fecha >= new Date(inicio);
-        if (!inicio && fin) return fecha <= new Date(fin);
-        return fecha >= new Date(inicio) && fecha <= new Date(fin);
+        if (inicio && !fin) return fecha >= toStart(inicio);
+        if (!inicio && fin) return fecha <= toEnd(fin);
+        return fecha >= toStart(inicio) && fecha <= toEnd(fin);
       },
     },
     {

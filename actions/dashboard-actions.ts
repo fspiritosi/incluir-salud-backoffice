@@ -5,13 +5,18 @@ import { cache } from 'react';
 
 export const getDashboardStats = cache(async () => {
   const supabase = await createClient();
-  const today = new Date().toISOString().split('T')[0];
-  
+  // Rango de hoy en hora local (00:00:00 -> 23:59:59.999)
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+
   const { data: prestacionesHoy } = await supabase
     .from('prestaciones')
     .select('*')
-    .gte('fecha', `${today}T00:00:00`)
-    .lte('fecha', `${today}T23:59:59`);
+    .gte('fecha', start.toISOString())
+    .lte('fecha', end.toISOString());
 
   const total = prestacionesHoy?.length || 0;
   const completadas = prestacionesHoy?.filter(p => p.estado === 'completada').length || 0;

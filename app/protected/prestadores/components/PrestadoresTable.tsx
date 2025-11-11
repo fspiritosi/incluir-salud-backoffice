@@ -25,6 +25,7 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuTrigger,
+  DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { togglePrestadorActivo } from "../actions";
@@ -236,6 +237,19 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-80 p-2">
+              <DropdownMenuItem
+                onSelect={() => {
+                  setSelectedPrestLabel("");
+                  setFPrestador("");
+                  table.getColumn('apellido')?.setFilterValue("");
+                  table.getColumn('nombre')?.setFilterValue("");
+                  table.getColumn('documento')?.setFilterValue("");
+                }}
+                className="text-sm text-muted-foreground"
+              >
+                Limpiar filtro (ver todos)
+              </DropdownMenuItem>
+              
               <Input
                 placeholder="Buscar (Apellido Nombre o DNI)"
                 value={fPrestador}
