@@ -7,6 +7,14 @@ import { Button } from '@/components/ui/button';
 import { ThemeSwitcher } from '@/components/theme-switcher';
 import { AuthButton } from '@/components/auth-button';
 import Image from 'next/image';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 
 type SidebarProps = {
   isCollapsed: boolean;
@@ -123,10 +131,31 @@ export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         </div>
 
         <div className="p-4">
-          <div className="flex flex-col gap-2">
-            <ThemeSwitcher />
-            <AuthButton isCollapsed={isCollapsed} />
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                className={cn('w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium justify-start', isCollapsed && 'justify-center')}
+                aria-label="Abrir menú de usuario"
+              >
+                <UserCog className="h-4 w-4" />
+                {!isCollapsed && <span className="truncate">Cuenta</span>}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Preferencias</DropdownMenuLabel>
+              <div className="px-2 py-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Tema</span>
+                  <ThemeSwitcher />
+                </div>
+              </div>
+              <DropdownMenuSeparator />
+              <div className="px-2 py-1.5">
+                <AuthButton isCollapsed={false} />
+              </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </div>

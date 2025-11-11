@@ -6,7 +6,9 @@ export async function getPrestacionesReporte(
   prestadorId: string,
   fechaInicio: string, // Formato YYYY-MM-DD
   fechaFin: string,    // Formato YYYY-MM-DD
-  estado?: 'pendiente' | 'completada'
+  estado?: 'pendiente' | 'completada',
+  pacienteIds?: string[],
+  tiposPrestacion?: string[]
 ) {
   const supabase = await createClient();
 
@@ -34,6 +36,12 @@ export async function getPrestacionesReporte(
   if (estado) {
     query = query.eq("estado", estado);
   }
+  if (pacienteIds && pacienteIds.length > 0) {
+    query = query.in('paciente_id', pacienteIds);
+  }
+  if (tiposPrestacion && tiposPrestacion.length > 0) {
+    query = query.in('tipo_prestacion', tiposPrestacion);
+  }
 
   const { data: prestaciones, error: prestacionesError } = await query;
 
@@ -42,16 +50,16 @@ export async function getPrestacionesReporte(
     return { data: null, error: prestacionesError };
   }
 
-  const pacienteIds = Array.from(
+  const pacienteIdsFromResults = Array.from(
     new Set(prestaciones?.map((p) => p.paciente_id).filter(Boolean))
   );
 
   let pacientesMap = new Map();
-  if (pacienteIds.length > 0) {
+  if (pacienteIdsFromResults.length > 0) {
     const { data: pacientes } = await supabase
       .from("pacientes")
       .select("id, nombre, apellido, documento")
-      .in("id", pacienteIds);
+      .in("id", pacienteIdsFromResults);
 
     pacientesMap = new Map((pacientes || []).map((p) => [p.id, p]));
   }
@@ -93,4 +101,47 @@ export async function getPrestadores() {
   }
 
   return data || [];
+}
+
+export async function getPacientesDePrestador(prestadorId: string) {
+  const supabase = await createClient();
+  const { data: prestaciones, error } = await supabase
+    .from('prestaciones')
+    .select('paciente_id')
+    .eq('user_id', prestadorId)
+    .not('paciente_id', 'is', null);
+  if (error) {
+    console.error('Error obteniendo pacientes del prestador:', error);
+    return [] as { id: string; nombre: string; apellido: string; documento?: string }[];
+  }
+  const ids = Array.from(new Set((prestaciones || []).map(p => p.paciente_id).filter(Boolean) as string[]));
+  if (ids.length === 0) return [];
+  const { data: pacientes } = await supabase
+    .from('pacientes')
+    .select('id, nombre, apellido, documento')
+    .in('id', ids)
+    .order('apellido', { ascending: true })
+    .order('nombre', { ascending: true });
+  return (pacientes || []) as { id: string; nombre: string; apellido: string; documento?: string }[];
+}
+
+export async function getTiposPrestacionDePrestador(prestadorId: string, pacienteIds?: string[]) {
+  const supabase = await createClient();
+  let query = supabase
+    .from('prestaciones')
+    .select('tipo_prestacion')
+    .eq('user_id', prestadorId);
+  if (pacienteIds && pacienteIds.length > 0) {
+    query = query.in('paciente_id', pacienteIds);
+  }
+  const { data, error } = await query;
+  if (error) {
+    console.error('Error obteniendo tipos de prestación:', error);
+    return [] as string[];
+  }
+  const tipos = Array.from(
+    new Set((data || []).map((r: any) => r.tipo_prestacion).filter(Boolean))
+  ) as string[];
+  tipos.sort((a, b) => a.localeCompare(b));
+  return tipos;
 }

@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { revalidatePath } from "next/cache";
 
 export type PrestacionInput = {
   tipo_prestacion: string; // enum in DB
@@ -20,6 +21,24 @@ function getAdminSupabase() {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) return null as any;
   return createAdminClient(url, serviceKey);
+}
+
+// Filtrar prestadores por especialidad que debe coincidir con el tipo de prestación seleccionado
+export async function listPrestadoresByEspecialidad(especialidad: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, nombre, apellido, documento')
+    .eq('tipo_usuario', 'prestador')
+    .eq('activo', true)
+    .eq('especialidad', especialidad)
+    .order('apellido', { ascending: true })
+    .order('nombre', { ascending: true });
+  if (error) {
+    console.error('Error listando prestadores por especialidad:', error);
+    return { data: [] as { id: string; apellido: string; nombre: string; documento?: string }[], error };
+  }
+  return { data: (data || []) as { id: string; apellido: string; nombre: string; documento?: string }[], error: null };
 }
 
 export async function listPrestadoresForSelect() {
@@ -227,7 +246,7 @@ export async function listPacientesForSelect() {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("pacientes")
-    .select("id, nombre, apellido")
+    .select("id, nombre, apellido, documento")
     .order("apellido", { ascending: true });
   return { data, error } as { data: { id: string; nombre: string; apellido: string }[] | null; error: any };
 }
@@ -239,4 +258,26 @@ export async function listObrasSocialesForSelect() {
     .select("id, nombre")
     .order("nombre", { ascending: true });
   return { data, error } as { data: { id: string; nombre: string }[] | null; error: any };
+}
+
+export async function cancelPrestacion(id: string) {
+  const supabase = await createClient();
+  // Solo cancelar si está en estado pendiente
+  const { data, error } = await supabase
+    .from('prestaciones')
+    .update({ estado: 'cancelada' })
+    .eq('id', id)
+    .eq('estado', 'pendiente')
+    .select('id')
+    .single();
+  if (!error) {
+    revalidatePath('/protected/prestaciones');
+  }
+  return { data, error } as const;
+}
+
+export async function cancelPrestacionAction(formData: FormData): Promise<void> {
+  const id = String(formData.get('id') || '');
+  if (!id) return;
+  await cancelPrestacion(id);
 }

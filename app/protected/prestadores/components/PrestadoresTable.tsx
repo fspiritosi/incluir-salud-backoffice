@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, X, MoreHorizontal } from "lucide-react";
+import { Check, X, MoreHorizontal, ChevronDown } from "lucide-react";
 import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
 import { canTogglePrestador } from "@/utils/permissions";
 import {
@@ -25,9 +25,11 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuTrigger,
+  DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { togglePrestadorActivo } from "../actions";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 type Prestador = {
   id: string;
@@ -49,6 +51,8 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [filterActivo, setFilterActivo] = useState<"todos" | "activos" | "inactivos">("todos");
+  const [fPrestador, setFPrestador] = useState("");
+  const [selectedPrestLabel, setSelectedPrestLabel] = useState<string>("");
 
   const handleToggleActivo = async (id: string, currentActivo: boolean | null) => {
     setIsUpdating(id);
@@ -117,20 +121,46 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
       header: "Acciones",
       cell: ({ row }) => {
         const prestador = row.original;
+        const variant = prestador.activo ? "destructive" : "default" as const;
+        const actionLabel = prestador.activo ? "Deshabilitar" : "Habilitar";
         return (
-          <Button
-            onClick={() => handleToggleActivo(prestador.id, prestador.activo)}
-            disabled={isUpdating === prestador.id || !canToggle || loading}
-            variant={prestador.activo ? "destructive" : "default"}
-            size="sm"
-            title={!canToggle && !loading ? "No tenés permiso para habilitar/deshabilitar prestadores" : undefined}
-          >
-            {isUpdating === prestador.id
-              ? "Actualizando..."
-              : prestador.activo
-                ? "Deshabilitar"
-                : "Habilitar"}
-          </Button>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button
+                disabled={isUpdating === prestador.id || !canToggle || loading}
+                variant={variant}
+                size="sm"
+                title={!canToggle && !loading ? "No tenés permiso para habilitar/deshabilitar prestadores" : undefined}
+              >
+                {actionLabel}
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{actionLabel} prestador</DialogTitle>
+                <DialogDescription>
+                  ¿Confirmás {actionLabel.toLowerCase()} al prestador {prestador.apellido}, {prestador.nombre}?
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter className="sm:justify-end">
+                <div className="flex items-center gap-2">
+                  <DialogClose asChild>
+                    <Button type="button" variant="outline">Cancelar</Button>
+                  </DialogClose>
+                  <DialogClose asChild>
+                    <Button
+                      type="button"
+                      variant={variant}
+                      disabled={isUpdating === prestador.id || !canToggle || loading}
+                      onClick={() => handleToggleActivo(prestador.id, prestador.activo)}
+                    >
+                      {isUpdating === prestador.id ? "Actualizando..." : "Confirmar"}
+                    </Button>
+                  </DialogClose>
+                </div>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         );
       },
     }
@@ -191,21 +221,67 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
-        <Input
-          placeholder="Filtrar apellido"
-          value={(table.getColumn("apellido")?.getFilterValue() as string) ?? ""}
-          onChange={(e) => table.getColumn("apellido")?.setFilterValue(e.target.value)}
-        />
-        <Input
-          placeholder="Filtrar nombre"
-          value={(table.getColumn("nombre")?.getFilterValue() as string) ?? ""}
-          onChange={(e) => table.getColumn("nombre")?.setFilterValue(e.target.value)}
-        />
-        <Input
-          placeholder="Filtrar documento"
-          value={(table.getColumn("documento")?.getFilterValue() as string) ?? ""}
-          onChange={(e) => table.getColumn("documento")?.setFilterValue(e.target.value)}
-        />
+        <div className="md:col-span-3">
+          <label className="sr-only">Filtrar prestador</label>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-between h-10 rounded-md border border-input bg-background px-3 text-sm font-normal hover:bg-background"
+              >
+                <span className={selectedPrestLabel ? '' : 'text-muted-foreground'}>
+                  {selectedPrestLabel || 'Filtrar por prestador'}
+                </span>
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-80 p-2">
+              <DropdownMenuItem
+                onSelect={() => {
+                  setSelectedPrestLabel("");
+                  setFPrestador("");
+                  table.getColumn('apellido')?.setFilterValue("");
+                  table.getColumn('nombre')?.setFilterValue("");
+                  table.getColumn('documento')?.setFilterValue("");
+                }}
+                className="text-sm text-muted-foreground"
+              >
+                Limpiar filtro (ver todos)
+              </DropdownMenuItem>
+              
+              <Input
+                placeholder="Buscar (Apellido Nombre o DNI)"
+                value={fPrestador}
+                onChange={(e) => setFPrestador(e.target.value)}
+                className="mb-2"
+              />
+              {prestadores
+                .filter(p => {
+                  const full = `${p.apellido} ${p.nombre}`.toLowerCase();
+                  const doc = (p.documento || '').toLowerCase();
+                  const q = fPrestador.toLowerCase();
+                  return full.includes(q) || doc.includes(q);
+                })
+                .map((p) => (
+                  <Button
+                    key={p.id}
+                    type="button"
+                    variant="ghost"
+                    className="w-full justify-start"
+                    onClick={() => {
+                      setSelectedPrestLabel(`${p.apellido}, ${p.nombre}${p.documento ? ' - DNI ' + p.documento : ''}`);
+                      table.getColumn('apellido')?.setFilterValue(p.apellido);
+                      table.getColumn('nombre')?.setFilterValue(p.nombre);
+                      table.getColumn('documento')?.setFilterValue(p.documento || "");
+                    }}
+                  >
+                    {p.apellido}, {p.nombre}{p.documento ? ` - DNI ${p.documento}` : ''}
+                  </Button>
+                ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
         <Select
           value={filterActivo}
           onValueChange={(value) => {

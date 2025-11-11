@@ -129,3 +129,34 @@ export async function setBeneficiarioActivo(id: string, activo: boolean) {
     .single();
   return { data, error };
 }
+
+// Provincias y ciudades para selects dependientes
+export type Province = { id: number; name: string };
+export type City = { id: number; name: string; province_id: number };
+
+export async function getProvinces() {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('provinces')
+    .select('id, name')
+    .order('name', { ascending: true });
+  if (error) {
+    console.error('Error fetching provinces:', error);
+    return { data: [] as Province[], error };
+  }
+  return { data: (data || []) as Province[], error: null };
+}
+
+export async function getCitiesByProvince(provinceId: number) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('cities')
+    .select('id, name, province_id')
+    .eq('province_id', provinceId)
+    .order('name', { ascending: true });
+  if (error) {
+    console.error('Error fetching cities:', error);
+    return { data: [] as City[], error };
+  }
+  return { data: (data || []) as City[], error: null };
+}
