@@ -24,6 +24,8 @@ import {
 } from "@/components/ui/form";
 import { useEffect, useState, useMemo } from "react";
 import { MapboxLocationPicker } from "@/components/map/MapboxLocationPicker";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { getProvinces, getCitiesByProvince, type Province, type City } from "@/app/protected/beneficiarios/actions";
 
 interface BeneficiarioFormProps {
   initialData?: any;
@@ -38,6 +40,11 @@ export function BeneficiarioForm({
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [addrVersion, setAddrVersion] = useState(0);
+  const [provinces, setProvinces] = useState<Province[]>([]);
+  const [cities, setCities] = useState<City[]>([]);
+  const [loadingProvinces, setLoadingProvinces] = useState(false);
+  const [loadingCities, setLoadingCities] = useState(false);
+  const [selectedProvinceId, setSelectedProvinceId] = useState<number | null>(null);
 
   const toLngLat = (val: any): { lng: number; lat: number } | null => {
     console.log("toLngLat input:", val, "Type:", typeof val);
@@ -146,6 +153,40 @@ export function BeneficiarioForm({
       ...(normalizedInitialData ?? {}),
     },
   });
+
+  // Load provinces on mount and preselect based on initial value
+  useEffect(() => {
+    (async () => {
+      setLoadingProvinces(true);
+      const { data: provs } = await getProvinces();
+      setProvinces(provs || []);
+      setLoadingProvinces(false);
+      // If there's an initial provincia name, map to id and load cities
+      const provName = form.getValues("provincia");
+      if (provName) {
+        const match = (provs || []).find((p) => p.name.toLowerCase() === provName.toLowerCase());
+        if (match) {
+          setSelectedProvinceId(match.id);
+          setLoadingCities(true);
+          const { data: c } = await getCitiesByProvince(match.id);
+          setCities(c || []);
+          setLoadingCities(false);
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When selectedProvinceId changes, fetch cities
+  useEffect(() => {
+    if (!selectedProvinceId) return;
+    (async () => {
+      setLoadingCities(true);
+      const { data } = await getCitiesByProvince(selectedProvinceId);
+      setCities(data || []);
+      setLoadingCities(false);
+    })();
+  }, [selectedProvinceId]);
 
   // Track if address fields have been modified from initial values
   const addressFieldsModified = useMemo(() => {
@@ -352,35 +393,68 @@ export function BeneficiarioForm({
 
           <FormField
             control={form.control}
+            name="provincia"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Provincia</FormLabel>
+                <FormControl>
+                  <Select
+                    value={field.value || ""}
+                    onValueChange={(val) => {
+                      field.onChange(val);
+                      // Find province id
+                      const match = provinces.find((p) => p.name === val) || null;
+                      setSelectedProvinceId(match ? match.id : null);
+                      // Clear city when province changes
+                      form.setValue('ciudad', "");
+                    }}
+                    disabled={loading || loadingProvinces}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder={loadingProvinces ? "Cargando..." : "Seleccionar provincia"} />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[360px] overflow-y-auto">
+                      {provinces.map((p) => (
+                        <SelectItem key={p.id} value={p.name}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
             name="ciudad"
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Ciudad</FormLabel>
                 <FormControl>
-                  <Input placeholder="Ciudad" {...field} disabled={loading} />
+                  <Select
+                    value={field.value || ""}
+                    onValueChange={(val) => field.onChange(val)}
+                    disabled={loading || !selectedProvinceId || loadingCities}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder={loadingCities ? "Cargando..." : !selectedProvinceId ? "Seleccioná provincia primero" : "Seleccionar ciudad"} />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[360px] overflow-y-auto">
+                      {cities.map((c) => (
+                        <SelectItem key={c.id} value={c.name}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
 
-          <FormField
-            control={form.control}
-            name="provincia"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Provincia</FormLabel>
-                <FormControl>
-                  <Input
-                    placeholder="Provincia"
-                    {...field}
-                    disabled={loading}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
 
           <FormField
             control={form.control}
@@ -435,17 +509,15 @@ export function BeneficiarioForm({
                     }
                     onLocationSelect={field.onChange}
                     address={
-                      addressFieldsModified
-                        ? [
-                            form.watch("direccion_completa"),
-                            form.watch("ciudad"),
-                            form.watch("provincia"),
-                            form.watch("codigo_postal"),
-                            "Argentina",
-                          ]
-                            .filter(Boolean)
-                            .join(", ")
-                        : "" // Don't geocode if fields haven't changed
+                      [
+                        form.watch("direccion_completa"),
+                        form.watch("ciudad"),
+                        form.watch("provincia"),
+                        form.watch("codigo_postal"),
+                        "Argentina",
+                      ]
+                        .filter(Boolean)
+                        .join(", ")
                     }
                     geocodeVersion={
                       addressFieldsModified ? addrVersion : undefined

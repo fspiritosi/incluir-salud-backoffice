@@ -2,7 +2,7 @@
 
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -24,11 +24,14 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
+import { useToast } from '@/components/ui/use-toast';
+import { ChevronDown } from 'lucide-react';
+import { listPrestadoresByEspecialidad } from '@/app/protected/prestaciones/actions';
 
 type PrestacionFormProps = {
   initialData?: any;
   isEditing?: boolean;
-  pacientes: { id: string; nombre: string; apellido: string }[];
+  pacientes: { id: string; nombre: string; apellido: string; documento?: string }[];
   obrasSociales: { id: string; nombre: string }[];
   prestadores: { id: string; apellido: string; nombre: string; documento?: string }[];
 };
@@ -36,9 +39,11 @@ type PrestacionFormProps = {
 export function PrestacionForm({ initialData, isEditing = false, pacientes, obrasSociales, prestadores }: PrestacionFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
   const [fPaciente, setFPaciente] = useState('');
   const [fObra, setFObra] = useState('');
   const [fPrestador, setFPrestador] = useState('');
+  const [prestadoresFiltrados, setPrestadoresFiltrados] = useState<{ id: string; apellido: string; nombre: string; documento?: string }[]>([]);
 
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkModeType, setBulkModeType] = useState<'cada-n' | 'dias-semana' | 'fechas-custom'>('cada-n');
@@ -50,7 +55,13 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
   const [bulkWeekdays, setBulkWeekdays] = useState<{[k:string]: boolean}>({
     lun: true, mar: false, mie: true, jue: false, vie: true, sab: false, dom: false,
   });
+
+  // (Se declara después de inicializar 'form')
+
+  // (efecto se declara después de inicializar 'form')
   const [customDatesInput, setCustomDatesInput] = useState<string>('');
+  const [customDate, setCustomDate] = useState<string>('');
+  const [customTime, setCustomTime] = useState<string>('');
   const [generatedDates, setGeneratedDates] = useState<string[]>([]);
 
   function toISO(dtLocal: string) {
@@ -89,17 +100,8 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
         }
       }
     } else if (bulkModeType === 'fechas-custom') {
-      const parts = customDatesInput
-        .split(/\n|, /)
-        .join(',')
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean);
-      for (const p of parts) {
-        const iso = toISO(p);
-        if (iso) out.push(iso);
-        if (out.length >= 60) break;
-      }
+      const out = [...generatedDates];
+      setGeneratedDates(out);
     }
     setGeneratedDates(out);
     if (out[0]) {
@@ -122,6 +124,28 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
     },
   });
 
+  // Observa el tipo de prestación ya con 'form' inicializado
+  const tipoPrestacion = form.watch('tipo_prestacion');
+
+  // Trae prestadores por especialidad y limpia selección inválida
+  useEffect(() => {
+    (async () => {
+      if (!tipoPrestacion) {
+        setPrestadoresFiltrados([]);
+        if (form.getValues('user_id')) form.setValue('user_id', '');
+        return;
+      }
+      const { data } = await listPrestadoresByEspecialidad(tipoPrestacion);
+      const lista = data || [];
+      setPrestadoresFiltrados(lista);
+      const current = form.getValues('user_id');
+      if (current && !lista.some(p => p.id === current)) {
+        form.setValue('user_id', '');
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoPrestacion]);
+
   const onSubmit = async (values: PrestacionFormValues) => {
     try {
       setLoading(true);
@@ -134,11 +158,9 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
         if (!values.paciente_id) throw new Error('Seleccioná un paciente.');
         const common = {
           ...values,
-          // Asegurar tipos UUID válidos
           user_id: values.user_id,
           paciente_id: values.paciente_id,
           obra_social_id: values.obra_social_id ? values.obra_social_id : null,
-          // fecha individual se establece por cada item en el backend
           fecha: undefined as any,
           monto: values.monto == null ? null : Number(values.monto),
         };
@@ -151,12 +173,12 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
           const t = await res.json().catch(() => ({} as any));
           throw new Error(t?.error || t?.message || `Error guardando prestaciones (${res.status})`);
         }
+        toast({ title: 'Prestaciones creadas', description: `Se crearon ${generatedDates.length} prestaciones.` });
       } else {
         if (!values.user_id) throw new Error('Seleccioná un prestador.');
         if (!values.paciente_id) throw new Error('Seleccioná un paciente.');
         const payload = {
           ...values,
-          // Normalizar UUIDs: null cuando no hay obra social
           user_id: values.user_id,
           paciente_id: values.paciente_id,
           obra_social_id: values.obra_social_id ? values.obra_social_id : null,
@@ -165,7 +187,6 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
         };
         let res: Response;
         if (isEditing && initialData?.id) {
-          console.log('Updating prestación', initialData.id);
           res = await fetch(`/api/prestaciones/${initialData.id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -182,10 +203,13 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
           const t = await res.json().catch(() => ({} as any));
           throw new Error(t?.error || t?.message || `Error guardando prestación (${res.status})`);
         }
+        toast({ title: isEditing ? 'Prestación actualizada' : 'Prestación creada' });
       }
 
       router.push('/protected/prestaciones');
       router.refresh();
+    } catch (err: any) {
+      toast({ title: 'No se pudo guardar', description: err?.message || 'Intentalo nuevamente', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -197,13 +221,145 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <FormField
             control={form.control}
+            name="paciente_id"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Paciente</FormLabel>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={loading}
+                      className="w-full justify-between h-10 rounded-md border border-input bg-background px-3 text-sm font-normal hover:bg-background ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className={field.value ? '' : 'text-muted-foreground'}>{(() => {
+                        const p = pacientes.find(p => p.id === field.value);
+                        return p ? `${p.apellido}, ${p.nombre}` : 'Seleccionar paciente';
+                      })()}</span>
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-80 p-2">
+                    <Input
+                      placeholder="Buscar paciente (Nombre Apellido o DNI)"
+                      value={fPaciente}
+                      onChange={(e) => setFPaciente(e.target.value)}
+                      className="mb-2"
+                    />
+                    {pacientes
+                      .filter(p => {
+                        const full = `${p.apellido} ${p.nombre}`.toLowerCase();
+                        const docRaw = (p.documento || '');
+                        const doc = docRaw.toLowerCase();
+                        const docDigits = docRaw.replace(/\D/g, '');
+                        const q = fPaciente.toLowerCase().trim();
+                        const qDigits = q.replace(/\D/g, '');
+                        return (
+                          full.includes(q) ||
+                          doc.includes(q) ||
+                          (!!qDigits && docDigits.includes(qDigits))
+                        );
+                      })
+                      .map((p) => (
+                        <DropdownMenuItem
+                          key={p.id}
+                          onClick={() => {
+                            field.onChange(p.id);
+                          }}
+                        >
+                          {p.apellido}, {p.nombre}
+                        </DropdownMenuItem>
+                      ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
             name="tipo_prestacion"
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Tipo de Prestación *</FormLabel>
                 <FormControl>
-                  <Input placeholder="Tipo" {...field} disabled={loading} />
+                  <Select
+                    value={field.value || ''}
+                    onValueChange={field.onChange}
+                    disabled={loading}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Seleccionar tipo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Acompañante Terapeutico">Acompañante Terapeutico</SelectItem>
+                      <SelectItem value="Kinesiología">Kinesiología</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="user_id"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Prestador</FormLabel>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={loading || !tipoPrestacion}
+                      className="w-full justify-between h-10 rounded-md border border-input bg-background px-3 text-sm font-normal hover:bg-background ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className={field.value ? '' : 'text-muted-foreground'}>{(() => {
+                        if (!tipoPrestacion) return 'Seleccioná tipo primero';
+                        const pr = prestadoresFiltrados.find(p => p.id === field.value);
+                        return pr ? `${pr.nombre} ${pr.apellido}${pr.documento ? ' - DNI ' + pr.documento : ''}` : 'Seleccionar prestador';
+                      })()}</span>
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-80 p-2">
+                    <Input
+                      placeholder="Buscar prestador (Nombre Apellido o DNI)"
+                      value={fPrestador}
+                      onChange={(e) => setFPrestador(e.target.value)}
+                      className="mb-2"
+                    />
+                    {prestadoresFiltrados
+                      .filter(p => {
+                        const full = `${p.apellido} ${p.nombre}`.toLowerCase();
+                        const doc = (p.documento || '').toLowerCase();
+                        const q = fPrestador.toLowerCase();
+                        return full.includes(q) || doc.includes(q);
+                      })
+                      .map((p) => (
+                        <DropdownMenuItem
+                          key={p.id}
+                          onClick={() => {
+                            field.onChange(p.id);
+                          }}
+                        >
+                          {p.nombre} {p.apellido}{p.documento ? ` - DNI ${p.documento}` : ''}
+                        </DropdownMenuItem>
+                      ))}
+                    {tipoPrestacion && prestadoresFiltrados.filter(p => {
+                      const full = `${p.apellido} ${p.nombre}`.toLowerCase();
+                      const doc = (p.documento || '').toLowerCase();
+                      const q = fPrestador.toLowerCase();
+                      return full.includes(q) || doc.includes(q);
+                    }).length === 0 && (
+                      <div className="px-2 py-6 text-sm text-muted-foreground">
+                        {fPrestador ? 'No hay resultados' : 'No hay prestadores para este tipo'}
+                      </div>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <FormMessage />
               </FormItem>
             )}
@@ -222,33 +378,36 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
               </FormItem>
             )}
           />
+          
 
-          <FormField
-            control={form.control}
-            name="estado"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Estado</FormLabel>
-                <FormControl>
-                  <Select
-                    value={field.value || 'pendiente'}
-                    onValueChange={field.onChange}
-                    disabled={loading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar estado" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pendiente">pendiente</SelectItem>
-                      <SelectItem value="completada">completada</SelectItem>
-                      <SelectItem value="cancelada">cancelada</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          {isEditing && (
+            <FormField
+              control={form.control}
+              name="estado"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Estado</FormLabel>
+                  <FormControl>
+                    <Select
+                      value={field.value || 'pendiente'}
+                      onValueChange={field.onChange}
+                      disabled={loading}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Seleccionar estado" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pendiente">pendiente</SelectItem>
+                        <SelectItem value="completada">completada</SelectItem>
+                        <SelectItem value="cancelada">cancelada</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
 
           <FormField
             control={form.control}
@@ -264,7 +423,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
             )}
           />
 
-          <FormField
+          {/* <FormField
             control={form.control}
             name="obra_social_id"
             render={({ field }) => (
@@ -272,8 +431,16 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
                 <FormLabel>Obra Social</FormLabel>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button type="button" variant="outline" disabled={loading}>
-                      {obrasSociales.find(o => o.id === field.value)?.nombre || 'Seleccionar obra social'}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={loading}
+                      className="w-full justify-between h-10 rounded-md border border-input bg-background px-3 text-sm font-normal hover:bg-background ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className={field.value ? '' : 'text-muted-foreground'}>
+                        {obrasSociales.find(o => o.id === field.value)?.nombre || 'Seleccionar obra social'}
+                      </span>
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="w-72 p-2">
@@ -301,94 +468,11 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
                 <FormMessage />
               </FormItem>
             )}
-          />
+          /> */}
 
-          <FormField
-            control={form.control}
-            name="paciente_id"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Paciente</FormLabel>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button type="button" variant="outline" disabled={loading}>
-                      {(() => {
-                        const p = pacientes.find(p => p.id === field.value);
-                        return p ? `${p.apellido}, ${p.nombre}` : 'Seleccionar paciente';
-                      })()}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-72 p-2">
-                    <Input
-                      placeholder="Buscar paciente"
-                      value={fPaciente}
-                      onChange={(e) => setFPaciente(e.target.value)}
-                      className="mb-2"
-                    />
-                    {pacientes
-                      .filter(p => (`${p.apellido} ${p.nombre}`).toLowerCase().includes(fPaciente.toLowerCase()))
-                      .map((p) => (
-                        <DropdownMenuItem
-                          key={p.id}
-                          onClick={() => {
-                            field.onChange(p.id);
-                          }}
-                        >
-                          {p.apellido}, {p.nombre}
-                        </DropdownMenuItem>
-                      ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          
 
-          <FormField
-            control={form.control}
-            name="user_id"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Prestador</FormLabel>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button type="button" variant="outline" disabled={loading}>
-                      {(() => {
-                        const pr = prestadores.find(p => p.id === field.value);
-                        return pr ? `${pr.nombre} ${pr.apellido}${pr.documento ? ' - DNI ' + pr.documento : ''}` : 'Seleccionar prestador';
-                      })()}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-80 p-2">
-                    <Input
-                      placeholder="Buscar prestador (Nombre Apellido o DNI)"
-                      value={fPrestador}
-                      onChange={(e) => setFPrestador(e.target.value)}
-                      className="mb-2"
-                    />
-                    {prestadores
-                      .filter(p => {
-                        const full = `${p.apellido} ${p.nombre}`.toLowerCase();
-                        const doc = (p.documento || '').toLowerCase();
-                        const q = fPrestador.toLowerCase();
-                        return full.includes(q) || doc.includes(q);
-                      })
-                      .map((p) => (
-                        <DropdownMenuItem
-                          key={p.id}
-                          onClick={() => {
-                            field.onChange(p.id);
-                          }}
-                        >
-                          {p.nombre} {p.apellido}{p.documento ? ` - DNI ${p.documento}` : ''}
-                        </DropdownMenuItem>
-                      ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          
         </div>
 
         {!isEditing && (
@@ -407,7 +491,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
                   onValueChange={(value: 'cada-n' | 'dias-semana' | 'fechas-custom') => setBulkModeType(value)}
                   disabled={loading}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="Seleccionar modo" />
                   </SelectTrigger>
                   <SelectContent>
@@ -469,16 +553,37 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
               )}
 
               {bulkModeType === 'fechas-custom' && (
-                <div>
-                  <label className="text-sm font-medium">Fechas (separadas por coma o nueva línea)</label>
-                  <textarea
-                    rows={3}
-                    className="border rounded px-3 py-2 w-full"
-                    placeholder="2025-11-05 10:00, 2025-11-07 10:00\n2025-11-09 10:00"
-                    value={customDatesInput}
-                    onChange={(e) => setCustomDatesInput(e.target.value)}
-                    disabled={loading}
-                  />
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-sm font-medium">Fecha</label>
+                      <Input type="date" value={customDate} onChange={(e) => setCustomDate(e.target.value)} disabled={loading} />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium">Hora</label>
+                      <Input type="time" value={customTime} onChange={(e) => setCustomTime(e.target.value)} disabled={loading} />
+                    </div>
+                    <div className="flex items-end">
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          if (!customDate || !customTime) return;
+                          const dt = new Date(`${customDate}T${customTime}`);
+                          const iso = dt.toISOString();
+                          setGeneratedDates((prev) => {
+                            const next = Array.from(new Set([...prev, iso])).slice(0, 60);
+                            return next.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+                          });
+                          if (!form.getValues('fecha')) {
+                            form.setValue('fecha', `${customDate}T${customTime}`);
+                          }
+                        }}
+                        disabled={loading}
+                      >
+                        Agregar
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               )}
 
