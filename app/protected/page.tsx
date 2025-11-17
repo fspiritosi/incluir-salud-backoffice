@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { getDashboardStats } from '@/actions/dashboard-actions';
-import { Calendar, CheckCircle2, Clock, TrendingUp } from "lucide-react";
+import { Calendar, CheckCircle2, Clock, TrendingUp, XCircle } from "lucide-react";
 
 export default async function ProtectedPage() {
   const supabase = await createClient();
@@ -23,7 +23,7 @@ export default async function ProtectedPage() {
       </div>
 
       {/* Tarjetas de estadísticas */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
           <h3 className="text-gray-500 dark:text-gray-400">Total hoy</h3>
           <p className="text-2xl font-bold dark:text-white">{stats.totalHoy}</p>
@@ -39,6 +39,17 @@ export default async function ProtectedPage() {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
           <h3 className="text-gray-500 dark:text-gray-400">Monto total</h3>
           <p className="text-2xl font-bold dark:text-white">${stats.montoTotal.toLocaleString()}</p>
+        </div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-red-50 dark:bg-red-900/20 rounded-full">
+              <XCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+            </div>
+            <div>
+              <h3 className="text-gray-500 dark:text-gray-400">Canceladas</h3>
+              <p className="text-2xl font-bold dark:text-white">{stats.canceladas}</p>
+            </div>
+          </div>
         </div>
       </div>
 

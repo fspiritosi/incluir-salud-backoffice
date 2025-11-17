@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Pencil, UserX, RotateCcw, MoreHorizontal } from "lucide-react";
+import { Pencil, UserX, RotateCcw, MoreHorizontal, ChevronDown, Eye } from "lucide-react";
 import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
 import { canCreateOrEditPaciente, canToggleBeneficiario } from "@/utils/permissions";
 import {
@@ -30,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type Paciente = {
   id: string;
@@ -59,22 +60,60 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [targetRow, setTargetRow] = useState<Paciente | null>(null);
+  const [nombreSearch, setNombreSearch] = useState("");
+  const [apellidoSearch, setApellidoSearch] = useState("");
+  const [documentoSearch, setDocumentoSearch] = useState("");
+  const [ciudadSearch, setCiudadSearch] = useState("");
+  const [provinciaSearch, setProvinciaSearch] = useState("");
+
+  const buildOptions = (selector: (p: Paciente) => string | null | undefined) => {
+    const set = new Set<string>();
+    data.forEach((item) => {
+      const value = selector(item);
+      if (value) set.add(value);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  };
+
+  const nombreOptions = useMemo(() => buildOptions((p) => p.nombre), [data]);
+  const apellidoOptions = useMemo(() => buildOptions((p) => p.apellido), [data]);
+  const documentoOptions = useMemo(() => buildOptions((p) => p.documento), [data]);
+  const ciudadOptions = useMemo(() => buildOptions((p) => p.ciudad ?? undefined), [data]);
+  const provinciaOptions = useMemo(() => buildOptions((p) => p.provincia ?? undefined), [data]);
 
   const columns: ColumnDef<Paciente>[] = [
     {
       accessorKey: "nombre",
       header: "Nombre",
       enableColumnFilter: true,
+      filterFn: (row, columnId, filterValue) => {
+        const values = (filterValue as string[]) || [];
+        if (!Array.isArray(values) || values.length === 0) return true;
+        const value = (row.getValue(columnId) as string) || "";
+        return values.includes(value);
+      },
     },
     {
       accessorKey: "apellido",
       header: "Apellido",
       enableColumnFilter: true,
+      filterFn: (row, columnId, filterValue) => {
+        const values = (filterValue as string[]) || [];
+        if (!Array.isArray(values) || values.length === 0) return true;
+        const value = (row.getValue(columnId) as string) || "";
+        return values.includes(value);
+      },
     },
     {
       accessorKey: "documento",
       header: "Documento",
       enableColumnFilter: true,
+      filterFn: (row, columnId, filterValue) => {
+        const values = (filterValue as string[]) || [];
+        if (!Array.isArray(values) || values.length === 0) return true;
+        const value = (row.getValue(columnId) as string) || "";
+        return values.includes(value);
+      },
     },
     {
       accessorKey: "direccion_completa",
@@ -84,11 +123,23 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
       accessorKey: "ciudad",
       header: "Ciudad",
       enableColumnFilter: true,
+      filterFn: (row, columnId, filterValue) => {
+        const values = (filterValue as string[]) || [];
+        if (!Array.isArray(values) || values.length === 0) return true;
+        const value = (row.getValue(columnId) as string) || "";
+        return values.includes(value);
+      },
     },
     {
       accessorKey: "provincia",
       header: "Provincia",
       enableColumnFilter: true,
+      filterFn: (row, columnId, filterValue) => {
+        const values = (filterValue as string[]) || [];
+        if (!Array.isArray(values) || values.length === 0) return true;
+        const value = (row.getValue(columnId) as string) || "";
+        return values.includes(value);
+      },
     },
     {
       accessorKey: "activo",
@@ -108,6 +159,11 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
         const paciente = row.original;
         return (
           <div className="flex items-center gap-2">
+            <Link href={`/protected/beneficiarios/${paciente.id}`} aria-label="Ver detalle">
+              <Button size="icon" variant="outline">
+                <Eye className="h-4 w-4" />
+              </Button>
+            </Link>
             {canEdit && !loading ? (
               <Link href={`/protected/beneficiarios/editar/${paciente.id}`} aria-label="Editar">
                 <Button size="icon" variant="outline">
@@ -220,31 +276,63 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
-        <Input
-          placeholder="Filtrar nombre"
-          value={(table.getColumn("nombre")?.getFilterValue() as string) ?? ""}
-          onChange={(e) => table.getColumn("nombre")?.setFilterValue(e.target.value)}
-        />
-        <Input
-          placeholder="Filtrar apellido"
-          value={(table.getColumn("apellido")?.getFilterValue() as string) ?? ""}
-          onChange={(e) => table.getColumn("apellido")?.setFilterValue(e.target.value)}
-        />
-        <Input
-          placeholder="Filtrar documento"
-          value={(table.getColumn("documento")?.getFilterValue() as string) ?? ""}
-          onChange={(e) => table.getColumn("documento")?.setFilterValue(e.target.value)}
-        />
-        <Input
-          placeholder="Filtrar ciudad"
-          value={(table.getColumn("ciudad")?.getFilterValue() as string) ?? ""}
-          onChange={(e) => table.getColumn("ciudad")?.setFilterValue(e.target.value)}
-        />
-        <Input
-          placeholder="Filtrar provincia"
-          value={(table.getColumn("provincia")?.getFilterValue() as string) ?? ""}
-          onChange={(e) => table.getColumn("provincia")?.setFilterValue(e.target.value)}
-        />
+        {[
+          { key: "nombre", label: "Nombres...", options: nombreOptions, search: nombreSearch, setSearch: setNombreSearch },
+          { key: "apellido", label: "Apellidos...", options: apellidoOptions, search: apellidoSearch, setSearch: setApellidoSearch },
+          { key: "documento", label: "Documentos...", options: documentoOptions, search: documentoSearch, setSearch: setDocumentoSearch },
+          { key: "ciudad", label: "Ciudades...", options: ciudadOptions, search: ciudadSearch, setSearch: setCiudadSearch },
+          { key: "provincia", label: "Provincias...", options: provinciaOptions, search: provinciaSearch, setSearch: setProvinciaSearch },
+        ].map(({ key, label, options, search, setSearch }) => (
+          <DropdownMenu key={key}>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="w-full justify-between">
+                <span className="truncate text-left">
+                  {(() => {
+                    const selected = (table.getColumn(key)?.getFilterValue() as string[]) || [];
+                    if (!selected?.length) return label;
+                    if (selected.length === 1) return selected[0];
+                    return `${selected.length} seleccionados`;
+                  })()}
+                </span>
+                <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-64 p-2">
+              <Input
+                placeholder={`Buscar ${label.toLowerCase().replace('...', '')}`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="mb-2"
+              />
+              <div className="max-h-[320px] overflow-y-auto space-y-2">
+                {options.filter((option) => option.toLowerCase().includes(search.toLowerCase().trim())).map((option) => {
+                  const selected = (table.getColumn(key)?.getFilterValue() as string[]) || [];
+                  const isChecked = selected.includes(option);
+                  return (
+                    <label key={option} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={() => {
+                          const column = table.getColumn(key);
+                          if (!column) return;
+                          const current = (column.getFilterValue() as string[]) || [];
+                          const next = isChecked
+                            ? current.filter((value) => value !== option)
+                            : [...current, option];
+                          column.setFilterValue(next.length ? next : undefined);
+                        }}
+                      />
+                      <span className="truncate">{option}</span>
+                    </label>
+                  );
+                })}
+                {options.filter((option) => option.toLowerCase().includes(search.toLowerCase().trim())).length === 0 && (
+                  <p className="text-sm text-muted-foreground">Sin resultados</p>
+                )}
+              </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ))}
         <Select
           value={fActivo}
           onValueChange={(value) => {

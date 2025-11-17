@@ -28,6 +28,7 @@ export const getDashboardStats = cache(async () => {
   const total = prestacionesHoy?.length || 0;
   const completadas = prestacionesHoy?.filter(p => p.estado === 'completada').length || 0;
   const pendientes = prestacionesHoy?.filter(p => p.estado === 'pendiente').length || 0;
+  const canceladas = prestacionesHoy?.filter(p => p.estado === 'cancelada').length || 0;
   const porcentaje = total > 0 ? Math.round((completadas / total) * 100) : 0;
   const monto = prestacionesHoy?.reduce((sum, p) => sum + (p.monto || 0), 0) || 0;
   
@@ -43,6 +44,7 @@ export const getDashboardStats = cache(async () => {
     pendientes,
     porcentajeCompletado: porcentaje,
     montoTotal: monto,
+    canceladas,
     prestacionesPorTipo: porTipo
   };
 });

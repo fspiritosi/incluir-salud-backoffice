@@ -116,6 +116,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
       obra_social_id: initialData?.obra_social_id || '',
       fecha: initialData?.fecha ? new Date(initialData.fecha).toISOString().slice(0,16) : '',
       estado: initialData?.estado || 'pendiente',
+      cronico: initialData?.cronico ?? false,
       monto: initialData?.monto ?? undefined,
       descripcion: initialData?.descripcion || '',
       notas: initialData?.notas || '',
@@ -161,6 +162,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
           user_id: values.user_id,
           paciente_id: values.paciente_id,
           obra_social_id: values.obra_social_id ? values.obra_social_id : null,
+          cronico: values.cronico ?? false,
           fecha: undefined as any,
           monto: values.monto == null ? null : Number(values.monto),
         };
@@ -182,6 +184,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
           user_id: values.user_id,
           paciente_id: values.paciente_id,
           obra_social_id: values.obra_social_id ? values.obra_social_id : null,
+          cronico: values.cronico ?? false,
           fecha: values.fecha ? new Date(values.fecha).toISOString() : new Date().toISOString(),
           monto: values.monto == null ? null : Number(values.monto),
         };
@@ -247,6 +250,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
                       onChange={(e) => setFPaciente(e.target.value)}
                       className="mb-2"
                     />
+
                     {pacientes
                       .filter(p => {
                         const full = `${p.apellido} ${p.nombre}`.toLowerCase();
@@ -611,6 +615,27 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
             )}
           </div>
         )}
+
+        <FormField
+          control={form.control}
+          name="cronico"
+          render={({ field }) => (
+            <FormItem className="flex flex-col space-y-2">
+              <FormLabel>Prestación crónica</FormLabel>
+              <FormControl>
+                <Switch
+                  checked={Boolean(field.value)}
+                  onCheckedChange={(checked) => field.onChange(checked)}
+                  disabled={loading}
+                />
+              </FormControl>
+              <p className="text-xs text-muted-foreground">
+                Si está activa, se propondrá replicarla automáticamente el próximo mes.
+              </p>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
 
         <FormField
           control={form.control}

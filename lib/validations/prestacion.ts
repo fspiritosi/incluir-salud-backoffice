@@ -5,6 +5,7 @@ export const prestacionSchema = z.object({
   obra_social_id: z.string().uuid().optional().or(z.literal('')).transform(v => v || undefined),
   fecha: z.string().min(1, 'Fecha requerida'),
   estado: z.string().optional(),
+  cronico: z.boolean().optional().default(false),
   monto: z.union([
     z.string().transform(v => v === '' ? undefined : Number(v)),
     z.number()
