@@ -31,7 +31,7 @@ function formatTipo(tipo: string) {
     .replace(/(^|\s)\p{L}/gu, match => match.toUpperCase());
 }
 
-function summarizePrestaciones(rows: Awaited<ReturnType<typeof getPrestacionesByPaciente>>["data"]) {
+function summarizePrestaciones(rows: NonNullable<Awaited<ReturnType<typeof getPrestacionesByPaciente>>["data"]>) {
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
