@@ -9,6 +9,7 @@ export type PrestacionInput = {
   obra_social_id?: string | null;
   fecha: string; // ISO string
   estado?: string | null; // enum in DB, default pendiente
+  cronico?: boolean | null;
   monto?: number | null;
   descripcion?: string | null;
   notas?: string | null;
@@ -74,7 +75,7 @@ export async function listPrestaciones() {
   // Primero obtenemos las prestaciones base
   const { data: prestaciones, error } = await supabase
     .from("prestaciones")
-    .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id")
+    .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico")
     .order("fecha", { ascending: false });
 
   if (error) {
@@ -114,6 +115,7 @@ export async function listPrestaciones() {
     estado: p.estado,
     monto: p.monto,
     user_id: p.user_id,
+    cronico: p.cronico,
     paciente: p.paciente_id ? pacientesMap.get(p.paciente_id) || null : null,
     prestador: p.user_id ? prestadoresMap.get(p.user_id) || null : null,
   }));
@@ -138,7 +140,7 @@ export async function getPrestacionById(id: string) {
   const { data, error } = await supabase
     .from("prestaciones")
     .select(
-      "id, tipo_prestacion, obra_social_id, fecha, estado, monto, descripcion, notas, paciente_id, user_id"
+      "id, tipo_prestacion, obra_social_id, fecha, estado, monto, descripcion, notas, paciente_id, user_id, cronico"
     )
     .eq("id", id)
     .single();
@@ -166,6 +168,7 @@ export async function createPrestacion(values: PrestacionInput) {
   const payload: any = {
     ...values,
     estado: values.estado ?? "pendiente",
+    cronico: values.cronico ?? false,
     user_id: values.user_id,
   };
   
@@ -197,6 +200,7 @@ export async function createPrestacionesBulk(common: Omit<PrestacionInput, 'fech
     ...common,
     fecha: f,
     estado: common.estado ?? 'pendiente',
+    cronico: common.cronico ?? false,
     user_id: common.user_id,
     monto: common.monto == null ? null : Number(common.monto),
   }));
@@ -230,6 +234,7 @@ export async function updatePrestacion(id: string, values: PrestacionInput) {
 
   const payload: any = {
     ...values,
+    cronico: values.cronico ?? false,
     user_id: values.user_id,
   };
   
