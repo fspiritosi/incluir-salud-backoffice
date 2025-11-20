@@ -352,30 +352,38 @@ export function StatsCards({ initialStats }: { initialStats: DashboardStats }) {
       </div>
 
       <Dialog open={!!selectedCard} onOpenChange={open => !open && setActiveCard(null)}>
-        <DialogContent className="max-w-5xl">
-          <DialogHeader>
-            <DialogTitle>{selectedCard?.label}</DialogTitle>
-            <DialogDescription>
-              {selectedCard
-                ? `${filteredRows.length} prestación(es) encontradas para este indicador.`
-                : "Seleccioná una tarjeta para ver el detalle correspondiente."}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="max-h-[60vh] overflow-auto rounded-md border">
-              <DataTable table={detailTable} />
+        <DialogContent className="max-w-6xl w-[95vw] max-h-[90vh] overflow-hidden p-0">
+          <div className="flex h-full max-h-[90vh] flex-col">
+            <div className="px-6 pt-6 pb-4">
+              <DialogHeader>
+                <DialogTitle>{selectedCard?.label}</DialogTitle>
+                <DialogDescription>
+                  {selectedCard
+                    ? `${filteredRows.length} prestación(es) encontradas para este indicador.`
+                    : "Seleccioná una tarjeta para ver el detalle correspondiente."}
+                </DialogDescription>
+              </DialogHeader>
             </div>
-            <DataTablePagination table={detailTable} showSelectedCount={false} showTotalCount={true} />
-          </div>
 
-          <DialogFooter className="sm:justify-end">
-            <DialogClose asChild>
-              <Button type="button" variant="outline">
-                Cerrar
-              </Button>
-            </DialogClose>
-          </DialogFooter>
+            <div className="flex-1 min-h-0 px-6">
+              <div className="max-h-[60vh] overflow-auto rounded-md border">
+                <div className="min-w-[1000px]">
+                  <DataTable table={detailTable} />
+                </div>
+              </div>
+            </div>
+
+            <div className="shrink-0 px-6 py-4 space-y-4">
+              <DataTablePagination table={detailTable} showSelectedCount={false} showTotalCount={true} />
+              <DialogFooter className="p-0 justify-end">
+                <DialogClose asChild>
+                  <Button type="button" variant="outline">
+                    Cerrar
+                  </Button>
+                </DialogClose>
+              </DialogFooter>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </>
