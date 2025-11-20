@@ -130,6 +130,177 @@ export async function setBeneficiarioActivo(id: string, activo: boolean) {
   return { data, error };
 }
 
+type PrestadorInfo = {
+  id: string;
+  nombre: string;
+  apellido: string;
+  documento?: string | null;
+};
+
+export type PrestacionPaciente = {
+  id: string;
+  tipo_prestacion: string;
+  fecha: string;
+  estado: string | null;
+  monto: number | null;
+  cronico: boolean | null;
+  user_id: string | null;
+  prestador: PrestadorInfo | null;
+  notas: string | null;
+};
+
+export async function getPrestacionesByPaciente(pacienteId: string) {
+  const supabase = await createClient();
+  const now = new Date();
+  const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const followingMonthStart = new Date(now.getFullYear(), now.getMonth() + 2, 1);
+
+  const { data: prestaciones, error } = await supabase
+    .from("prestaciones")
+    .select("id, tipo_prestacion, fecha, estado, monto, cronico, user_id, notas")
+    .eq("paciente_id", pacienteId)
+    .gte("fecha", previousMonthStart.toISOString())
+    .lt("fecha", followingMonthStart.toISOString())
+    .order("fecha", { ascending: false });
+
+  if (error) {
+    console.error("Error listando prestaciones del paciente", error);
+    return { data: null as PrestacionPaciente[] | null, error };
+  }
+
+  const prestadorIds = Array.from(
+    new Set((prestaciones || []).map(p => p.user_id).filter(Boolean) as string[])
+  );
+
+  let prestadoresMap = new Map<string, PrestadorInfo>();
+  if (prestadorIds.length > 0) {
+    const { data: prestadores } = await supabase
+      .from("profiles")
+      .select("id, nombre, apellido, documento")
+      .in("id", prestadorIds);
+    prestadoresMap = new Map((prestadores || []).map(p => [p.id, p]));
+  }
+
+  const data: PrestacionPaciente[] = (prestaciones || []).map(p => ({
+    id: p.id,
+    tipo_prestacion: p.tipo_prestacion,
+    fecha: p.fecha,
+    estado: p.estado,
+    monto: p.monto,
+    cronico: p.cronico,
+    user_id: p.user_id,
+    prestador: p.user_id ? prestadoresMap.get(p.user_id) || null : null,
+    notas: (p as any).notas ?? null,
+  }));
+
+  return { data, error: null };
+}
+
+function projectToNextMonth(fecha: string, nextMonthStart: Date) {
+  const original = new Date(fecha);
+  if (Number.isNaN(original.getTime())) return null;
+  const dow = original.getDay();
+  const weekIndex = Math.floor((original.getDate() - 1) / 7);
+
+  const anchor = new Date(nextMonthStart);
+  const firstDow = anchor.getDay();
+  const diff = (dow - firstDow + 7) % 7;
+  anchor.setDate(anchor.getDate() + diff + weekIndex * 7);
+
+  if (anchor.getMonth() !== nextMonthStart.getMonth()) {
+    return null;
+  }
+
+  anchor.setHours(original.getHours(), original.getMinutes(), original.getSeconds(), original.getMilliseconds());
+  return anchor;
+}
+
+export async function clonePrestacionesCronicasPaciente(pacienteId: string) {
+  const supabase = await createClient();
+  const now = new Date();
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const followingMonthStart = new Date(now.getFullYear(), now.getMonth() + 2, 1);
+
+  const { data: cronicas, error } = await supabase
+    .from("prestaciones")
+    .select(
+      "id, tipo_prestacion, fecha, estado, monto, descripcion, notas, user_id, obra_social_id, cronico"
+    )
+    .eq("paciente_id", pacienteId)
+    .eq("cronico", true)
+    .gte("fecha", currentMonthStart.toISOString())
+    .lt("fecha", nextMonthStart.toISOString());
+
+  if (error) {
+    throw error;
+  }
+
+  if (!cronicas || cronicas.length === 0) {
+    return { created: 0, skipped: 0 };
+  }
+
+  const candidates = cronicas
+    .map(row => {
+      const projected = projectToNextMonth(row.fecha, nextMonthStart);
+      if (!projected) return null;
+      return {
+        source: row,
+        targetDate: projected,
+      };
+    })
+    .filter(Boolean) as { source: typeof cronicas[number]; targetDate: Date }[];
+
+  if (candidates.length === 0) {
+    return { created: 0, skipped: cronicas.length };
+  }
+
+  const { data: existingNextMonth } = await supabase
+    .from("prestaciones")
+    .select("fecha, tipo_prestacion")
+    .eq("paciente_id", pacienteId)
+    .gte("fecha", nextMonthStart.toISOString())
+    .lt("fecha", followingMonthStart.toISOString());
+
+  const existingKeys = new Set(
+    (existingNextMonth || []).map(item => {
+      const normalized = new Date(item.fecha);
+      return `${item.tipo_prestacion}__${normalized.toISOString()}`;
+    })
+  );
+
+  const rowsToInsert = candidates.filter(candidate => {
+    const key = `${candidate.source.tipo_prestacion}__${candidate.targetDate.toISOString()}`;
+    return !existingKeys.has(key);
+  });
+
+  if (rowsToInsert.length === 0) {
+    return { created: 0, skipped: candidates.length };
+  }
+
+  const payload = rowsToInsert.map(({ source, targetDate }) => ({
+    tipo_prestacion: source.tipo_prestacion,
+    fecha: targetDate.toISOString(),
+    estado: source.estado ?? "pendiente",
+    monto: source.monto,
+    descripcion: source.descripcion,
+    notas: source.notas,
+    paciente_id: pacienteId,
+    user_id: source.user_id,
+    obra_social_id: source.obra_social_id,
+    cronico: true,
+  }));
+
+  const { error: insertError } = await supabase.from("prestaciones").insert(payload);
+  if (insertError) {
+    throw insertError;
+  }
+
+  return { created: payload.length, skipped: candidates.length - payload.length };
+}
+
 // Provincias y ciudades para selects dependientes
 export type Province = { id: number; name: string };
 export type City = { id: number; name: string; province_id: number };

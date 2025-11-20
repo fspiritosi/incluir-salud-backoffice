@@ -3,7 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { listPrestaciones } from "@/app/protected/prestaciones/actions";
-import { PrestacionesTable } from "@/components/prestaciones/PrestacionesTable";
+import { PrestacionesTable, type PrestacionRow } from "@/components/prestaciones/PrestacionesTable";
 
 export default async function PrestacionesPage() {
   const supabase = await createClient();
@@ -45,8 +45,7 @@ export default async function PrestacionesPage() {
           <Button disabled title="No tenés permiso para crear prestaciones">Nueva Prestación</Button>
         )}
       </div>
-      <PrestacionesTable data={(data || []) as any} />
+      <PrestacionesTable data={(data || []) as PrestacionRow[]} />
     </div>
   );
 }
-

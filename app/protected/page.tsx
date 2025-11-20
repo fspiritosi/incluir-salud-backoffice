@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { getDashboardStats } from '@/actions/dashboard-actions';
-import { Calendar, CheckCircle2, Clock, TrendingUp } from "lucide-react";
+import { StatsCards } from "@/components/dashboard/StatsCards";
 
 export default async function ProtectedPage() {
   const supabase = await createClient();
@@ -11,42 +11,25 @@ export default async function ProtectedPage() {
     redirect("/auth/login");
   }
   
-  const stats = await getDashboardStats();
+  const stats = await getDashboardStats({ period: 'day' });
+  
 
   return (
     <div className="flex-1 w-full flex flex-col gap-6 p-6">
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
-          <p className="text-gray-600 dark:text-gray-400 mt-1">Resumen de actividades del día</p>
+          <p className="text-gray-600 dark:text-gray-400 mt-1">Resumen de actividades para {stats.range.label.toLowerCase()}</p>
         </div>
       </div>
 
-      {/* Tarjetas de estadísticas */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-          <h3 className="text-gray-500 dark:text-gray-400">Total hoy</h3>
-          <p className="text-2xl font-bold dark:text-white">{stats.totalHoy}</p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-          <h3 className="text-gray-500 dark:text-gray-400">Completadas</h3>
-          <p className="text-2xl font-bold dark:text-white">{stats.completadas}</p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-          <h3 className="text-gray-500 dark:text-gray-400">Porcentaje</h3>
-          <p className="text-2xl font-bold dark:text-white">{stats.porcentajeCompletado}%</p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-          <h3 className="text-gray-500 dark:text-gray-400">Monto total</h3>
-          <p className="text-2xl font-bold dark:text-white">${stats.montoTotal.toLocaleString()}</p>
-        </div>
-      </div>
+      <StatsCards initialStats={stats} />
 
       {/* Gráficos */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Gráfico de progreso */}
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Progreso del Día</h2>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Progreso</h2>
           <div className="space-y-4">
             <div>
               <div className="flex justify-between mb-2">
@@ -78,7 +61,7 @@ export default async function ProtectedPage() {
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Tipos de Prestación</h2>
           <div className="space-y-4">
             {Object.entries(stats.prestacionesPorTipo).map(([tipo, cantidad]) => {
-              const porcentaje = (cantidad / stats.totalHoy) * 100;
+              const porcentaje = stats.total > 0 ? (cantidad / stats.total) * 100 : 0;
               return (
                 <div key={tipo} className="space-y-1">
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{tipo}</span>
