@@ -30,6 +30,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { togglePrestadorActivo } from "../actions";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { useToast } from "@/components/ui/use-toast";
 
 type Prestador = {
   id: string;
@@ -46,6 +47,7 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
   const router = useRouter();
   const { roles, loading } = useBackofficeRoles();
   const canToggle = canTogglePrestador(roles);
+  const { toast } = useToast();
   const [isUpdating, setIsUpdating] = useState<string | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -54,13 +56,42 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
   const [fPrestador, setFPrestador] = useState("");
   const [selectedPrestLabel, setSelectedPrestLabel] = useState<string>("");
 
-  const handleToggleActivo = async (id: string, currentActivo: boolean | null) => {
+  const handleToggleActivo = async (id: string, currentActivo: boolean | null, nombreCompleto: string) => {
     setIsUpdating(id);
     try {
-      await togglePrestadorActivo(id, !currentActivo);
+      const { data, error } = await togglePrestadorActivo(id, !currentActivo);
+      if (error) {
+        toast({
+          title: "No se pudo actualizar",
+          description: error.message || "Intentá nuevamente",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (currentActivo) {
+        const cancelled = data && 'cancelledCount' in data ? data.cancelledCount ?? 0 : 0;
+        toast({
+          title: "Prestador deshabilitado",
+          description: cancelled > 0
+            ? `${cancelled} prestaciones pendientes se cancelaron y pasaron al pool de reasignación.`
+            : `No tenía prestaciones pendientes.`
+        });
+      } else {
+        toast({
+          title: "Prestador habilitado",
+          description: `${nombreCompleto} vuelve a estar disponible.`,
+        });
+      }
+
       router.refresh();
     } catch (error) {
       console.error("Error al actualizar prestador:", error);
+      toast({
+        title: "Error inesperado",
+        description: "No se pudo actualizar el prestador",
+        variant: "destructive",
+      });
     } finally {
       setIsUpdating(null);
     }
@@ -152,7 +183,11 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
                       type="button"
                       variant={variant}
                       disabled={isUpdating === prestador.id || !canToggle || loading}
-                      onClick={() => handleToggleActivo(prestador.id, prestador.activo)}
+                      onClick={() => handleToggleActivo(
+                        prestador.id,
+                        prestador.activo,
+                        `${prestador.apellido}, ${prestador.nombre}`
+                      )}
                     >
                       {isUpdating === prestador.id ? "Actualizando..." : "Confirmar"}
                     </Button>

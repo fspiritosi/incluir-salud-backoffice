@@ -247,6 +247,226 @@ export async function updatePrestacion(id: string, values: PrestacionInput) {
   return { data, error };
 }
 
+export type PrestacionParaReasignar = {
+  pool_id: string;
+  prestacion_id: string;
+  cancelled_at: string;
+  reason: string;
+  prestacion: {
+    id: string;
+    tipo_prestacion: string;
+    fecha: string;
+    estado: string | null;
+    monto: number | null;
+    cronico: boolean | null;
+  } | null;
+  paciente: { id: string; nombre: string; apellido: string; documento: string } | null;
+  prestadorAnterior: { id: string; nombre: string; apellido: string; documento?: string | null } | null;
+  metadata: Record<string, any> | null;
+};
+
+export async function listPrestacionesParaReasignar() {
+  const supabase = await createClient();
+
+  const { data: poolRows, error } = await supabase
+    .from('prestaciones_reasignacion_pool')
+    .select('id, prestacion_id, prestador_id, cancelled_at, reason, metadata')
+    .is('processed_at', null)
+    .order('cancelled_at', { ascending: false });
+
+  if (error) {
+    console.error('Error obteniendo pool de reasignación:', error);
+    return { data: null as PrestacionParaReasignar[] | null, error };
+  }
+
+  if (!poolRows || poolRows.length === 0) {
+    return { data: [] as PrestacionParaReasignar[], error: null };
+  }
+
+  const prestacionIds = poolRows.map((row) => row.prestacion_id).filter(Boolean) as string[];
+  const { data: prestaciones, error: prestacionesError } = await supabase
+    .from('prestaciones')
+    .select('id, tipo_prestacion, fecha, estado, monto, cronico, paciente_id, user_id')
+    .in('id', prestacionIds);
+
+  if (prestacionesError) {
+    console.error('Error obteniendo prestaciones para reasignar:', prestacionesError);
+    return { data: null as PrestacionParaReasignar[] | null, error: prestacionesError };
+  }
+
+  const pacientesIds = Array.from(new Set((prestaciones || []).map((p) => p.paciente_id).filter(Boolean))) as string[];
+  const prestadoresIds = Array.from(new Set([
+    ...poolRows.map((row) => row.prestador_id).filter(Boolean) as string[],
+    ...((prestaciones || []).map((p) => p.user_id).filter(Boolean) as string[]),
+  ]));
+
+  let pacientesMap = new Map<string, { id: string; nombre: string; apellido: string; documento: string }>();
+  if (pacientesIds.length > 0) {
+    const { data: pacientes } = await supabase
+      .from('pacientes')
+      .select('id, nombre, apellido, documento')
+      .in('id', pacientesIds);
+    pacientesMap = new Map((pacientes || []).map((p) => [p.id, p]));
+  }
+
+  let prestadoresMap = new Map<string, { id: string; nombre: string; apellido: string; documento?: string | null }>();
+  if (prestadoresIds.length > 0) {
+    const { data: prestadores } = await supabase
+      .from('profiles')
+      .select('id, nombre, apellido, documento')
+      .in('id', prestadoresIds);
+    prestadoresMap = new Map((prestadores || []).map((p) => [p.id, p]));
+  }
+
+  const prestacionesMap = new Map((prestaciones || []).map((p) => [p.id, p]));
+
+  const data: PrestacionParaReasignar[] = poolRows.map((row) => {
+    const prestacion = (row.prestacion_id && prestacionesMap.get(row.prestacion_id)) || null;
+    const paciente = prestacion?.paciente_id ? pacientesMap.get(prestacion.paciente_id) || null : null;
+    const prestadorAnterior = row.prestador_id ? prestadoresMap.get(row.prestador_id) || null : null;
+
+    return {
+      pool_id: row.id,
+      prestacion_id: row.prestacion_id,
+      cancelled_at: row.cancelled_at,
+      reason: row.reason,
+      metadata: (row.metadata as Record<string, any>) || null,
+      prestacion: prestacion
+        ? {
+            id: prestacion.id,
+            tipo_prestacion: prestacion.tipo_prestacion,
+            fecha: prestacion.fecha,
+            estado: prestacion.estado,
+            monto: prestacion.monto,
+            cronico: prestacion.cronico,
+          }
+        : null,
+      paciente,
+      prestadorAnterior,
+    };
+  });
+
+  return { data, error: null };
+}
+
+export async function reasignarPrestacionDesdePool(poolId: string, nuevoPrestadorId: string, nuevaHora?: string) {
+  const supabase = await createClient();
+
+  const { data: userRes, error: userError } = await supabase.auth.getUser();
+  if (userError || !userRes?.user?.id) {
+    const err = userError ?? new Error('Usuario no autenticado');
+    return { data: null, error: err } as const;
+  }
+
+  const { data: poolRow, error: poolError } = await supabase
+    .from('prestaciones_reasignacion_pool')
+    .select('id, prestacion_id, metadata')
+    .eq('id', poolId)
+    .is('processed_at', null)
+    .single();
+
+  if (poolError || !poolRow) {
+    const err = poolError ?? new Error('Registro no encontrado en el pool');
+    return { data: null, error: err } as const;
+  }
+
+  const updates: Record<string, any> = {
+    user_id: nuevoPrestadorId,
+    estado: 'pendiente',
+  };
+
+  if (nuevaHora) {
+    const [hoursStr = '0', minutesStr = '0'] = nuevaHora.split(':');
+    const hours = Math.min(23, Math.max(0, Number(hoursStr) || 0));
+    const minutes = Math.min(59, Math.max(0, Number(minutesStr) || 0));
+    const { data: prestacionActual } = await supabase
+      .from('prestaciones')
+      .select('fecha')
+      .eq('id', poolRow.prestacion_id)
+      .single();
+
+    if (prestacionActual?.fecha) {
+      const date = new Date(prestacionActual.fecha);
+      if (!Number.isNaN(date.getTime())) {
+        date.setHours(hours, minutes, 0, 0);
+        updates.fecha = date.toISOString();
+      }
+    }
+  }
+
+  const { data: updatedPrestacion, error: prestacionError } = await supabase
+    .from('prestaciones')
+    .update(updates)
+    .eq('id', poolRow.prestacion_id)
+    .select('id, fecha')
+    .single();
+
+  if (prestacionError) {
+    console.error('Error reasignando prestación:', prestacionError);
+    return { data: null, error: prestacionError } as const;
+  }
+
+  const nowIso = new Date().toISOString();
+  const updatedMetadata = {
+    ...(poolRow.metadata as Record<string, any> | null ?? {}),
+    reassigned_to: nuevoPrestadorId,
+    reassigned_at: nowIso,
+  };
+
+  const { error: poolUpdateError } = await supabase
+    .from('prestaciones_reasignacion_pool')
+    .update({
+      processed_at: nowIso,
+      processed_by: userRes.user.id,
+      metadata: updatedMetadata,
+    })
+    .eq('id', poolId);
+
+  if (poolUpdateError) {
+    console.error('Error actualizando pool de reasignación:', poolUpdateError);
+    return { data: null, error: poolUpdateError } as const;
+  }
+
+  revalidatePath('/protected/prestaciones');
+
+  return { data: updatedPrestacion, error: null } as const;
+}
+
+export async function descartarPrestacionDePool(poolId: string, motivo: string = 'Cancelada desde pool') {
+  const supabase = await createClient();
+
+  const { data: userRes, error: userError } = await supabase.auth.getUser();
+  if (userError || !userRes?.user?.id) {
+    const err = userError ?? new Error('Usuario no autenticado');
+    return { data: null, error: err } as const;
+  }
+
+  const nowIso = new Date().toISOString();
+
+  const { error } = await supabase
+    .from('prestaciones_reasignacion_pool')
+    .update({
+      processed_at: nowIso,
+      processed_by: userRes.user.id,
+      metadata: {
+        status: 'descartada',
+        reason: motivo,
+        processed_at: nowIso,
+        processed_by: userRes.user.id,
+      },
+    })
+    .eq('id', poolId);
+
+  if (error) {
+    console.error('Error descartando prestación del pool:', error);
+    return { data: null, error } as const;
+  }
+
+  revalidatePath('/protected/prestaciones');
+
+  return { data: { poolId }, error: null } as const;
+}
+
 export async function listPacientesForSelect() {
   const supabase = await createClient();
   const { data, error } = await supabase
