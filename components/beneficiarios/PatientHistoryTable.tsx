@@ -5,7 +5,18 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   timeStyle: "short",
 });
 
-import { useMemo, useState } from "react";
+const toDateOnlyString = (date: Date) => date.toISOString().slice(0, 10);
+
+const parseDateOrFallback = (value?: string | null, fallback?: Date) => {
+  if (!value) return fallback ?? new Date();
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return fallback ?? new Date();
+  }
+  return parsed;
+};
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ColumnDef,
   getCoreRowModel,
@@ -18,6 +29,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export type PatientHistoryRow = {
   id: string;
@@ -30,7 +42,9 @@ export type PatientHistoryRow = {
 };
 
 type PatientHistoryTableProps = {
+  pacienteId: string;
   data: PatientHistoryRow[];
+  defaultRange: { startDate: string; endDate: string };
 };
 
 const currencyFormatter = new Intl.NumberFormat("es-AR", {
@@ -52,25 +66,57 @@ function formatPrestador(row: PatientHistoryRow) {
   return [apellido, nombre].filter(Boolean).join(", ");
 }
 
-export function PatientHistoryTable({ data }: PatientHistoryTableProps) {
+const estadoBadgeClasses = (estado?: string | null) => {
+  const value = (estado || "").toLowerCase();
+  if (value === "completada") return "bg-green-100 text-green-800 border-green-200";
+  if (value === "pendiente" || value === "") return "bg-yellow-100 text-yellow-800 border-yellow-200";
+  if (value === "cancelada") return "bg-red-100 text-red-800 border-red-200";
+  return "bg-muted text-foreground";
+};
+
+export function PatientHistoryTable({ pacienteId, data, defaultRange }: PatientHistoryTableProps) {
   const [sorting, setSorting] = useState<SortingState>([{ id: "fecha", desc: true }]);
   const [prestadorFilter, setPrestadorFilter] = useState<string>("todos");
   const [tipoFilter, setTipoFilter] = useState<string>("todos");
   const [monthFilter, setMonthFilter] = useState<"todos" | "actual" | "anterior">("todos");
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
+  const [rows, setRows] = useState<PatientHistoryRow[]>(data);
+  const [isFetching, setIsFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const defaultRangeDates = useMemo(() => {
+    return {
+      start: parseDateOrFallback(defaultRange.startDate),
+      end: parseDateOrFallback(defaultRange.endDate),
+    };
+  }, [defaultRange.startDate, defaultRange.endDate]);
+
+  const [loadedRange, setLoadedRange] = useState(defaultRangeDates);
+  const initialDataRef = useRef(data);
+
+  useEffect(() => {
+    initialDataRef.current = data;
+    setRows(data);
+  }, [data]);
+
+  useEffect(() => {
+    setLoadedRange(defaultRangeDates);
+  }, [defaultRangeDates]);
 
   const prestadorOptions = useMemo(() => {
     const unique = new Map<string, string>();
-    data.forEach(row => {
+    rows.forEach(row => {
       if (row.prestador?.id) {
         unique.set(row.prestador.id, formatPrestador(row));
       }
     });
     return Array.from(unique.entries());
-  }, [data]);
+  }, [rows]);
 
   const tipoOptions = useMemo(() => {
-    return Array.from(new Set(data.map(row => row.tipo_prestacion))).sort((a, b) => a.localeCompare(b));
-  }, [data]);
+    return Array.from(new Set(rows.map(row => row.tipo_prestacion))).sort((a, b) => a.localeCompare(b));
+  }, [rows]);
 
   const boundaries = useMemo(() => {
     const now = new Date();
@@ -80,8 +126,84 @@ export function PatientHistoryTable({ data }: PatientHistoryTableProps) {
     return { currentStart, nextStart, prevStart };
   }, []);
 
+  const dateRange = useMemo(() => {
+    const start = startDate ? new Date(`${startDate}T00:00:00`) : null;
+    const end = endDate ? new Date(`${endDate}T23:59:59.999`) : null;
+    return { start, end };
+  }, [startDate, endDate]);
+
+  const shouldFetchFromServer = useMemo(() => {
+    if (!dateRange.start || !dateRange.end) {
+      return false;
+    }
+    if (dateRange.start < loadedRange.start) {
+      return true;
+    }
+    if (dateRange.end > loadedRange.end) {
+      return true;
+    }
+    return false;
+  }, [dateRange, loadedRange]);
+
+  const fetchPrestaciones = useCallback(
+    async (range: { startDate: string; endDate: string }) => {
+      setIsFetching(true);
+      setFetchError(null);
+      try {
+        const params = new URLSearchParams();
+        params.set("startDate", range.startDate);
+        params.set("endDate", range.endDate);
+        const query = params.toString();
+        const response = await fetch(
+          `/api/beneficiarios/${pacienteId}/prestaciones?${query}`,
+          { cache: "no-store" }
+        );
+
+        if (!response.ok) {
+          throw new Error("No se pudieron obtener las prestaciones para el rango solicitado");
+        }
+
+        const json = await response.json();
+        return (json.data || []) as PatientHistoryRow[];
+      } catch (error: any) {
+        console.error("Error cargando prestaciones con rango dinámico", error);
+        setFetchError(error?.message || "No se pudieron actualizar los datos");
+        return null;
+      } finally {
+        setIsFetching(false);
+      }
+    },
+    [pacienteId]
+  );
+
+  useEffect(() => {
+    if (!shouldFetchFromServer) return;
+
+    const effectiveStart = startDate || toDateOnlyString(loadedRange.start);
+    const effectiveEnd = endDate || toDateOnlyString(loadedRange.end);
+
+    let cancelled = false;
+
+    const run = async () => {
+      const fetched = await fetchPrestaciones({ startDate: effectiveStart, endDate: effectiveEnd });
+      if (!cancelled && fetched) {
+        setRows(fetched);
+        setLoadedRange({
+          start: parseDateOrFallback(`${effectiveStart}T00:00:00`, loadedRange.start),
+          end: parseDateOrFallback(`${effectiveEnd}T23:59:59.999`, loadedRange.end),
+        });
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [shouldFetchFromServer, startDate, endDate, fetchPrestaciones, loadedRange]);
+
   const filteredData = useMemo(() => {
-    return data.filter(row => {
+    return rows.filter(row => {
       if (prestadorFilter !== "todos" && row.prestador?.id !== prestadorFilter) {
         return false;
       }
@@ -100,9 +222,18 @@ export function PatientHistoryTable({ data }: PatientHistoryTableProps) {
           }
         }
       }
+      if (dateRange.start || dateRange.end) {
+        const fecha = new Date(row.fecha);
+        if (dateRange.start && fecha < dateRange.start) {
+          return false;
+        }
+        if (dateRange.end && fecha > dateRange.end) {
+          return false;
+        }
+      }
       return true;
     });
-  }, [data, prestadorFilter, tipoFilter, monthFilter, boundaries]);
+  }, [rows, prestadorFilter, tipoFilter, monthFilter, boundaries, dateRange]);
 
   const columns: ColumnDef<PatientHistoryRow>[] = [
     {
@@ -123,16 +254,27 @@ export function PatientHistoryTable({ data }: PatientHistoryTableProps) {
     {
       accessorKey: "estado",
       header: "Estado",
-      cell: ({ row }) => <Badge variant="outline">{row.original.estado ?? "pendiente"}</Badge>,
+      cell: ({ row }) => {
+        const rawEstado = row.original.estado ?? "pendiente";
+        return (
+          <Badge variant="outline" className={`${estadoBadgeClasses(row.original.estado)} capitalize`}>
+            {rawEstado}
+          </Badge>
+        );
+      },
     },
     {
       accessorKey: "cronico",
       header: "Crónica",
       cell: ({ row }) =>
         row.original.cronico ? (
-          <Badge variant="secondary">Sí</Badge>
+          <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200">
+            Sí
+          </Badge>
         ) : (
-          <span className="text-muted-foreground">No</span>
+          <Badge variant="outline" className="bg-muted text-foreground">
+            No
+          </Badge>
         ),
     },
     {
@@ -194,6 +336,51 @@ export function PatientHistoryTable({ data }: PatientHistoryTableProps) {
             <SelectItem value="anterior">Sólo mes anterior</SelectItem>
           </SelectContent>
         </Select>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="space-y-1">
+          <label htmlFor="historial-desde" className="text-sm font-medium text-muted-foreground">Desde</label>
+          <Input
+            id="historial-desde"
+            type="date"
+            value={startDate}
+            max={endDate || undefined}
+            onChange={event => setStartDate(event.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <label htmlFor="historial-hasta" className="text-sm font-medium text-muted-foreground">Hasta</label>
+          <Input
+            id="historial-hasta"
+            type="date"
+            value={endDate}
+            min={startDate || undefined}
+            onChange={event => setEndDate(event.target.value)}
+          />
+        </div>
+        <div className="flex items-end">
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            disabled={!startDate && !endDate}
+            onClick={() => {
+              setStartDate("");
+              setEndDate("");
+              setFetchError(null);
+              setRows(initialDataRef.current);
+              setLoadedRange(defaultRangeDates);
+            }}
+          >
+            Limpiar rango
+          </Button>
+        </div>
+      </div>
+
+      <div className="min-h-[1.25rem] text-sm">
+        {isFetching && <span className="text-muted-foreground">Actualizando datos del servidor…</span>}
+        {!isFetching && fetchError && <span className="text-destructive">{fetchError}</span>}
       </div>
 
       <DataTable table={table} />

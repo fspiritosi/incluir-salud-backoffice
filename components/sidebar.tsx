@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { LayoutDashboard, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight, UserCog } from 'lucide-react';
+import { LayoutDashboard, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight, UserCog, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ThemeSwitcher } from '@/components/theme-switcher';
 import { AuthButton } from '@/components/auth-button';
@@ -15,6 +15,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
+import { useBackofficeRoles } from '@/hooks/useBackofficeRoles';
 
 type SidebarProps = {
   isCollapsed: boolean;
@@ -23,6 +24,8 @@ type SidebarProps = {
 
 export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
+  const { roles } = useBackofficeRoles();
+  const isSuperAdmin = roles.includes('super_admin');
 
   const menuItems = [
     {
@@ -50,6 +53,15 @@ export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
       href: '/protected/reportes',
       icon: FileText,
     },
+    ...(isSuperAdmin
+      ? [
+          {
+            name: 'Administración',
+            href: '/protected/admin/usuarios',
+            icon: ShieldCheck,
+          },
+        ]
+      : []),
   ];
 
   return (
