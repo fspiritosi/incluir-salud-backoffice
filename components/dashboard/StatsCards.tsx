@@ -334,7 +334,7 @@ export function StatsCards({ initialStats }: { initialStats: DashboardStats }) {
               onClick={() => setActiveCard(card.id)}
               className={`relative flex h-full flex-col rounded-lg p-6 pt-7 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${card.accentClasses}`}
             >
-              <span className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full border border-white/60 bg-white/80 text-primary dark:border-white/20 dark:bg-white/10">
+              <span className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-inherit text-primary ring-1 ring-black/5 dark:ring-white/15">
                 <Icon className="h-5 w-5" />
               </span>
               <div className="flex-1 min-w-0 space-y-1.5 pr-12">

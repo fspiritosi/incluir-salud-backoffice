@@ -149,20 +149,46 @@ export type PrestacionPaciente = {
   notas: string | null;
 };
 
-export async function getPrestacionesByPaciente(pacienteId: string) {
+type PrestacionPacienteRange = {
+  startDate?: string | null;
+  endDate?: string | null;
+};
+
+export async function getPrestacionesByPaciente(pacienteId: string, range: PrestacionPacienteRange = {}) {
   const supabase = await createClient();
   const now = new Date();
-  const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  const followingMonthStart = new Date(now.getFullYear(), now.getMonth() + 2, 1);
+  const defaultStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const defaultEnd = new Date(now.getFullYear(), now.getMonth() + 2, 1);
+
+  let queryStartDate = defaultStart;
+  let queryEndDate = defaultEnd;
+
+  if (range.startDate) {
+    const parsedStart = new Date(`${range.startDate}T00:00:00`);
+    if (!Number.isNaN(parsedStart.getTime())) {
+      queryStartDate = parsedStart;
+    }
+  }
+
+  if (range.endDate) {
+    const parsedEnd = new Date(`${range.endDate}T23:59:59.999`);
+    if (!Number.isNaN(parsedEnd.getTime())) {
+      queryEndDate = parsedEnd;
+    }
+  }
+
+  if (queryStartDate > queryEndDate) {
+    const temp = queryStartDate;
+    queryStartDate = queryEndDate;
+    queryEndDate = temp;
+  }
 
   const { data: prestaciones, error } = await supabase
     .from("prestaciones")
     .select("id, tipo_prestacion, fecha, estado, monto, cronico, user_id, notas")
     .eq("paciente_id", pacienteId)
-    .gte("fecha", previousMonthStart.toISOString())
-    .lt("fecha", followingMonthStart.toISOString())
+    .gte("fecha", queryStartDate.toISOString())
+    .lt("fecha", queryEndDate.toISOString())
     .order("fecha", { ascending: false });
 
   if (error) {

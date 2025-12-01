@@ -60,9 +60,8 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [targetRow, setTargetRow] = useState<Paciente | null>(null);
-  const [nombreSearch, setNombreSearch] = useState("");
-  const [apellidoSearch, setApellidoSearch] = useState("");
-  const [documentoSearch, setDocumentoSearch] = useState("");
+  const [identidadSearch, setIdentidadSearch] = useState("");
+  const [identidadSelected, setIdentidadSelected] = useState<string[]>([]);
   const [ciudadSearch, setCiudadSearch] = useState("");
   const [provinciaSearch, setProvinciaSearch] = useState("");
 
@@ -75,11 +74,29 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   };
 
-  const nombreOptions = useMemo(() => buildOptions((p) => p.nombre), [data]);
-  const apellidoOptions = useMemo(() => buildOptions((p) => p.apellido), [data]);
-  const documentoOptions = useMemo(() => buildOptions((p) => p.documento), [data]);
+  const identidadOptions = useMemo(() => {
+    const formatLabel = (paciente: Paciente) => {
+      const nombreCompleto = [paciente.apellido, paciente.nombre].filter(Boolean).join(", ");
+      const documento = paciente.documento ? ` · DNI ${paciente.documento}` : "";
+      return `${nombreCompleto || "Sin datos"}${documento}`;
+    };
+
+    return data
+      .map((paciente) => ({ value: paciente.id, label: formatLabel(paciente) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [data]);
+  const identidadLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    identidadOptions.forEach(({ value, label }) => map.set(value, label));
+    return map;
+  }, [identidadOptions]);
   const ciudadOptions = useMemo(() => buildOptions((p) => p.ciudad ?? undefined), [data]);
   const provinciaOptions = useMemo(() => buildOptions((p) => p.provincia ?? undefined), [data]);
+
+  const tableData = useMemo(() => {
+    if (!identidadSelected.length) return data;
+    return data.filter((paciente) => identidadSelected.includes(paciente.id));
+  }, [data, identidadSelected]);
 
   const columns: ColumnDef<Paciente>[] = [
     {
@@ -222,7 +239,7 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
   };
 
   const table = useReactTable({
-    data,
+    data: tableData,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -275,11 +292,58 @@ export function BeneficiariosTable({ data }: BeneficiariosTableProps) {
         </DropdownMenu>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="w-full justify-between">
+              <span className="truncate text-left">
+                {(() => {
+                  if (identidadSelected.length === 0) return "Nombre / Apellido / Documento...";
+                  if (identidadSelected.length === 1) {
+                    return identidadLabels.get(identidadSelected[0]) || "1 seleccionado";
+                  }
+                  return `${identidadSelected.length} seleccionados`;
+                })()}
+              </span>
+              <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-64 p-2">
+            <Input
+              placeholder="Buscar nombre, apellido o documento"
+              value={identidadSearch}
+              onChange={(e) => setIdentidadSearch(e.target.value)}
+              className="mb-2"
+            />
+            <div className="max-h-[320px] overflow-y-auto space-y-2">
+              {identidadOptions
+                .filter(({ label }) => label.toLowerCase().includes(identidadSearch.toLowerCase().trim()))
+                .map(({ value, label }) => {
+                  const isChecked = identidadSelected.includes(value);
+                  return (
+                    <label key={value} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={() => {
+                          setIdentidadSelected((current) => {
+                            const next = isChecked
+                              ? current.filter((item) => item !== value)
+                              : [...current, value];
+                            return next;
+                          });
+                        }}
+                      />
+                      <span className="truncate">{label}</span>
+                    </label>
+                  );
+                })}
+              {identidadOptions.filter(({ label }) => label.toLowerCase().includes(identidadSearch.toLowerCase().trim())).length === 0 && (
+                <p className="text-sm text-muted-foreground">Sin resultados</p>
+              )}
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
         {[
-          { key: "nombre", label: "Nombres...", options: nombreOptions, search: nombreSearch, setSearch: setNombreSearch },
-          { key: "apellido", label: "Apellidos...", options: apellidoOptions, search: apellidoSearch, setSearch: setApellidoSearch },
-          { key: "documento", label: "Documentos...", options: documentoOptions, search: documentoSearch, setSearch: setDocumentoSearch },
           { key: "ciudad", label: "Ciudades...", options: ciudadOptions, search: ciudadSearch, setSearch: setCiudadSearch },
           { key: "provincia", label: "Provincias...", options: provinciaOptions, search: provinciaSearch, setSearch: setProvinciaSearch },
         ].map(({ key, label, options, search, setSearch }) => (

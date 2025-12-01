@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import ReporteGenerator from "./components/ReporteGenerator";
-import { getPrestadores } from "./actions";
+import ReporteBeneficiarioGenerator from "./components/ReporteBeneficiarioGenerator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { getPrestadores, getBeneficiarios } from "./actions";
 
 export default async function ReportesPage() {
   const supabase = await createClient();
@@ -11,7 +13,10 @@ export default async function ReportesPage() {
     redirect("/auth/login");
   }
 
-  const prestadores = await getPrestadores();
+  const [prestadores, beneficiarios] = await Promise.all([
+    getPrestadores(),
+    getBeneficiarios(),
+  ]);
 
   return (
     <div className="flex-1 w-full flex flex-col gap-6 p-6">
@@ -22,7 +27,18 @@ export default async function ReportesPage() {
         </p>
       </div>
 
-      <ReporteGenerator prestadores={prestadores} />
+      <Tabs defaultValue="prestador" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="prestador">Por prestador</TabsTrigger>
+          <TabsTrigger value="beneficiario">Por beneficiario</TabsTrigger>
+        </TabsList>
+        <TabsContent value="prestador">
+          <ReporteGenerator prestadores={prestadores} />
+        </TabsContent>
+        <TabsContent value="beneficiario">
+          <ReporteBeneficiarioGenerator beneficiarios={beneficiarios} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

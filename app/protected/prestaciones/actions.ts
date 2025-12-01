@@ -147,6 +147,17 @@ export async function getPrestacionById(id: string) {
   return { data, error };
 }
 
+export async function updatePrestacionNota(id: string, notas: string | null) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("prestaciones")
+    .update({ notas })
+    .eq("id", id)
+    .select("id, notas")
+    .single();
+  return { data, error };
+}
+
 export async function createPrestacion(values: PrestacionInput) {
   const supabase = await createClient();
   
@@ -320,12 +331,26 @@ export async function listPrestacionesParaReasignar() {
 
   const prestacionesMap = new Map((prestaciones || []).map((p) => [p.id, p]));
 
-  const data: PrestacionParaReasignar[] = poolRows.map((row) => {
+  const data: PrestacionParaReasignar[] = [];
+  const autoProcessedIds: string[] = [];
+
+  poolRows.forEach((row) => {
     const prestacion = (row.prestacion_id && prestacionesMap.get(row.prestacion_id)) || null;
     const paciente = prestacion?.paciente_id ? pacientesMap.get(prestacion.paciente_id) || null : null;
     const prestadorAnterior = row.prestador_id ? prestadoresMap.get(row.prestador_id) || null : null;
 
-    return {
+    const prestacionFecha = prestacion?.fecha ? new Date(prestacion.fecha) : null;
+    const cancelledAtDate = row.cancelled_at ? new Date(row.cancelled_at) : null;
+    const shouldAutoProcess = Boolean(
+      prestacionFecha && cancelledAtDate && prestacionFecha.getTime() < cancelledAtDate.getTime()
+    );
+
+    if (shouldAutoProcess) {
+      autoProcessedIds.push(row.id);
+      return;
+    }
+
+    data.push({
       pool_id: row.id,
       prestacion_id: row.prestacion_id,
       cancelled_at: row.cancelled_at,
@@ -343,8 +368,27 @@ export async function listPrestacionesParaReasignar() {
         : null,
       paciente,
       prestadorAnterior,
-    };
+    });
   });
+
+  if (autoProcessedIds.length > 0) {
+    const nowIso = new Date().toISOString();
+    const { error: autoProcessError } = await supabase
+      .from('prestaciones_reasignacion_pool')
+      .update({
+        processed_at: nowIso,
+        metadata: {
+          status: 'cancelada',
+          auto_processed: true,
+          auto_processed_reason: 'prestacion anterior a fecha de inhabilitacion',
+        },
+      })
+      .in('id', autoProcessedIds);
+
+    if (autoProcessError) {
+      console.error('Error auto-procesando prestaciones previas a inhabilitación:', autoProcessError);
+    }
+  }
 
   return { data, error: null };
 }
@@ -430,6 +474,32 @@ export async function reasignarPrestacionDesdePool(poolId: string, nuevoPrestado
   revalidatePath('/protected/prestaciones');
 
   return { data: updatedPrestacion, error: null } as const;
+}
+
+export type ReasignacionMasivaPoolItem = {
+  poolId: string;
+  nuevoPrestadorId: string;
+  nuevaHora?: string;
+};
+
+export async function reasignarPrestacionesMasivasDesdePool(items: ReasignacionMasivaPoolItem[]) {
+  if (!items.length) {
+    return { data: { successIds: [] as string[], errors: [] as { poolId: string; message: string }[] }, error: null } as const;
+  }
+
+  const successIds: string[] = [];
+  const errors: { poolId: string; message: string }[] = [];
+
+  for (const item of items) {
+    const { error } = await reasignarPrestacionDesdePool(item.poolId, item.nuevoPrestadorId, item.nuevaHora);
+    if (error) {
+      errors.push({ poolId: item.poolId, message: error?.message || "No se pudo reasignar" });
+    } else {
+      successIds.push(item.poolId);
+    }
+  }
+
+  return { data: { successIds, errors }, error: null } as const;
 }
 
 export async function descartarPrestacionDePool(poolId: string, motivo: string = 'Cancelada desde pool') {

@@ -14,3 +14,16 @@ export const canTogglePrestador = (roles: RoleName[]) =>
 
 export const canToggleBeneficiario = (roles: RoleName[]) =>
   hasRole(roles, ["auditor", "super_admin"]);
+
+export const BACKOFFICE_ROLE_OPTIONS: RoleName[] = [
+  "administrativo",
+  "auditor",
+  "super_admin",
+];
+
+export const ROLE_LABELS: Record<RoleName, string> = {
+  usuario: "Usuario",
+  administrativo: "Administrativo",
+  auditor: "Auditor",
+  super_admin: "Super Admin",
+};

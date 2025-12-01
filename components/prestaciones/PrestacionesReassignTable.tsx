@@ -1,6 +1,6 @@
 "use client";
 
-import { PrestacionParaReasignar } from "@/app/protected/prestaciones/actions";
+import { PrestacionParaReasignar, reasignarPrestacionesMasivasDesdePool } from "@/app/protected/prestaciones/actions";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -16,6 +16,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { descartarPrestacionDePool, reasignarPrestacionDesdePool } from "@/app/protected/prestaciones/actions";
 import { useState, useTransition } from "react";
 import { useToast } from "@/components/ui/use-toast";
+import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
+import type { CheckedState } from "@radix-ui/react-checkbox";
 
 const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   day: "2-digit",
@@ -43,6 +46,16 @@ export default function PrestacionesReassignTable({ data, prestadoresPorTipo }: 
   const [pendingPoolId, setPendingPoolId] = useState<string | null>(null);
   const [cancellingPoolId, setCancellingPoolId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [bulkSelection, setBulkSelection] = useState<Set<string>>(new Set());
+  const [bulkPrestadorId, setBulkPrestadorId] = useState<string>("");
+  const [isBulkPending, startBulkTransition] = useTransition();
+
+  const getErrorMessage = (error: unknown, fallback: string) => {
+    if (error && typeof error === "object" && "message" in error && typeof (error as any).message === "string") {
+      return (error as any).message as string;
+    }
+    return fallback;
+  };
 
   const getTimeForRow = (row: PrestacionParaReasignar) => {
     if (timeSelection[row.pool_id]) return timeSelection[row.pool_id];
@@ -74,7 +87,7 @@ export default function PrestacionesReassignTable({ data, prestadoresPorTipo }: 
       if (error) {
         toast({
           title: "No se pudo reasignar",
-          description: error.message || "Intentá nuevamente",
+          description: getErrorMessage(error, "Intentá nuevamente"),
           variant: "destructive",
         });
         setPendingPoolId(null);
@@ -108,7 +121,7 @@ export default function PrestacionesReassignTable({ data, prestadoresPorTipo }: 
       if (error) {
         toast({
           title: "No se pudo cancelar",
-          description: error.message || "Intentá nuevamente",
+          description: getErrorMessage(error, "Intentá nuevamente"),
           variant: "destructive",
         });
         setCancellingPoolId(null);
@@ -133,6 +146,96 @@ export default function PrestacionesReassignTable({ data, prestadoresPorTipo }: 
     });
   };
 
+  const toggleRowSelected = (poolId: string, checked: boolean) => {
+    setBulkSelection(prev => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(poolId);
+      } else {
+        next.delete(poolId);
+      }
+      return next;
+    });
+  };
+
+  const toggleAllRows = (checked: boolean) => {
+    if (checked) {
+      setBulkSelection(new Set(data.map(row => row.pool_id)));
+    } else {
+      setBulkSelection(new Set());
+    }
+  };
+
+  const selectedRows = data.filter(row => bulkSelection.has(row.pool_id));
+  const uniqueTipos = new Set(selectedRows.map(row => row.prestacion?.tipo_prestacion).filter(Boolean) as string[]);
+  const bulkTipo = uniqueTipos.size === 1 ? Array.from(uniqueTipos)[0] : null;
+  const bulkPrestadores = bulkTipo ? prestadoresPorTipo[bulkTipo] ?? [] : [];
+  const bulkDisabledReason = (() => {
+    if (!selectedRows.length) return "Seleccioná al menos una prestación";
+    if (!bulkTipo) return "Las prestaciones seleccionadas deben ser del mismo tipo";
+    if (!bulkPrestadorId) return "Elegí el nuevo prestador";
+    return null;
+  })();
+
+  const clearBulkState = () => {
+    setBulkSelection(new Set());
+    setBulkPrestadorId("");
+  };
+
+  const allSelected = bulkSelection.size > 0 && bulkSelection.size === data.length;
+  const partiallySelected = bulkSelection.size > 0 && bulkSelection.size < data.length;
+  const selectAllState: CheckedState = allSelected ? true : partiallySelected ? "indeterminate" : false;
+
+  const handleBulkReassign = () => {
+    if (bulkDisabledReason) {
+      toast({
+        title: "No se puede reasignar",
+        description: bulkDisabledReason,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    startBulkTransition(async () => {
+      const payload = selectedRows.map(row => ({
+        poolId: row.pool_id,
+        nuevoPrestadorId: bulkPrestadorId,
+        nuevaHora: getTimeForRow(row) || undefined,
+      }));
+
+      const { data: result, error } = await reasignarPrestacionesMasivasDesdePool(payload);
+      if (error) {
+        toast({
+          title: "No se pudieron reasignar",
+          description: getErrorMessage(error, "Intentá nuevamente"),
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const successCount = result?.successIds.length ?? 0;
+      const errorCount = result?.errors.length ?? 0;
+
+      if (successCount) {
+        toast({
+          title: "Reasignación masiva completada",
+          description: `${successCount} prestación${successCount === 1 ? "" : "es"} reasignada${successCount === 1 ? "" : "s"}.`,
+        });
+      }
+
+      if (errorCount) {
+        toast({
+          title: "Prestaciones con errores",
+          description: `${errorCount} prestación${errorCount === 1 ? "" : "es"} no se pudo reasignar. Revisá el detalle en la consola.`,
+          variant: "destructive",
+        });
+        console.error("Errores en reasignación masiva", result?.errors);
+      }
+
+      clearBulkState();
+    });
+  };
+
   if (!data.length) {
     return (
       <Card>
@@ -144,106 +247,181 @@ export default function PrestacionesReassignTable({ data, prestadoresPorTipo }: 
   }
 
   return (
-    <div className="rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Prestación</TableHead>
-            <TableHead>Paciente</TableHead>
-            <TableHead>Prestador anterior</TableHead>
-            <TableHead>Cancelada</TableHead>
-            <TableHead>Motivo</TableHead>
-            <TableHead>Horario</TableHead>
-            <TableHead>Nuevo prestador</TableHead>
-            <TableHead className="text-right">Acciones</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {data.map((row) => {
-            const tipo = row.prestacion?.tipo_prestacion ?? "";
-            const opciones = tipo ? prestadoresPorTipo[tipo] ?? [] : [];
-            return (
-            <TableRow key={row.pool_id}>
-              <TableCell>
-                <div className="flex flex-col">
-                  <span className="font-medium">{row.prestacion?.tipo_prestacion ?? "Sin tipo"}</span>
-                  <span className="text-sm text-muted-foreground">
-                    {row.prestacion ? dateFormatter.format(new Date(row.prestacion.fecha)) : "-"}
-                  </span>
-                  {row.prestacion?.cronico && (
-                    <Badge variant="outline" className="mt-2 w-fit">Crónica</Badge>
-                  )}
-                </div>
-              </TableCell>
-              <TableCell>
-                <div className="flex flex-col">
-                  <span className="font-medium">{formatPersona(row.paciente)}</span>
-                </div>
-              </TableCell>
-              <TableCell>{formatPersona(row.prestadorAnterior)}</TableCell>
-              <TableCell>
-                <span className="text-sm text-muted-foreground">
-                  {dateFormatter.format(new Date(row.cancelled_at))}
-                </span>
-              </TableCell>
-              <TableCell>{row.reason}</TableCell>
-              <TableCell>
-                <input
-                  type="time"
-                  className="w-[140px] rounded border border-input bg-background px-3 py-1 text-sm"
-                  value={timeSelection[row.pool_id] ?? getTimeForRow(row)}
-                  onChange={(event) =>
-                    setTimeSelection((prev) => ({ ...prev, [row.pool_id]: event.target.value }))
-                  }
-                  disabled={isPending && pendingPoolId === row.pool_id}
+    <div className="space-y-3">
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-3 rounded-md border px-4 py-3",
+          selectedRows.length ? "border-primary/40 bg-primary/5" : "border-dashed border-muted"
+        )}
+      >
+        <div className="text-sm">
+          <p className="font-medium">Reasignación masiva</p>
+          <p className="text-muted-foreground">
+            {selectedRows.length
+              ? `${selectedRows.length} prestación${selectedRows.length === 1 ? "" : "es"} seleccionada${selectedRows.length === 1 ? "" : "s"}`
+              : "Seleccioná las prestaciones que quieras reasignar"}
+          </p>
+        </div>
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <Select
+            value={bulkPrestadorId}
+            onValueChange={setBulkPrestadorId}
+            disabled={!bulkTipo || bulkPrestadores.length === 0 || isBulkPending}
+          >
+            <SelectTrigger className="w-[240px]">
+              <SelectValue
+                placeholder={
+                  !selectedRows.length
+                    ? "Seleccioná prestaciones"
+                    : !bulkTipo
+                      ? "Tipos mixtos"
+                      : bulkPrestadores.length
+                        ? "Elegí prestador"
+                        : "Sin prestadores disponibles"
+                }
+              />
+            </SelectTrigger>
+            <SelectContent>
+              {bulkPrestadores.map(prestador => (
+                <SelectItem key={prestador.id} value={prestador.id}>
+                  {prestador.apellido}, {prestador.nombre}
+                  {prestador.documento ? ` · DNI ${prestador.documento}` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="secondary"
+            disabled={!selectedRows.length || isBulkPending}
+            onClick={() => toggleAllRows(false)}
+          >
+            Limpiar selección
+          </Button>
+          <Button
+            variant="default"
+            disabled={Boolean(bulkDisabledReason) || isBulkPending}
+            onClick={handleBulkReassign}
+          >
+            {isBulkPending ? "Reasignando..." : "Reasignar seleccionadas"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[40px]">
+                <Checkbox
+                  aria-label="Seleccionar todas"
+                  checked={selectAllState}
+                  onCheckedChange={checked => toggleAllRows(checked === true)}
                 />
-              </TableCell>
-              <TableCell>
-                <Select
-                  value={selection[row.pool_id] ?? ""}
-                  onValueChange={(value) => setSelection((prev) => ({ ...prev, [row.pool_id]: value }))}
-                  disabled={(isPending && pendingPoolId === row.pool_id) || opciones.length === 0}
-                >
-                  <SelectTrigger className="w-[240px] truncate">
-                    <SelectValue
-                      placeholder={opciones.length ? "Elegí prestador" : "Sin prestadores disponibles"}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {opciones.map((prestador) => (
-                      <SelectItem key={prestador.id} value={prestador.id}>
-                        <span className="flex-1 truncate">
-                          {prestador.apellido}, {prestador.nombre}
-                          {prestador.documento ? ` · DNI ${prestador.documento}` : ""}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </TableCell>
-              <TableCell className="space-x-2 text-right">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={(isPending && pendingPoolId === row.pool_id) || opciones.length === 0}
-                  onClick={() => handleReassign(row)}
-                >
-                  {isPending && pendingPoolId === row.pool_id ? "Reasignando..." : "Reasignar"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  disabled={isCancelling && cancellingPoolId === row.pool_id}
-                  onClick={() => handleDiscard(row.pool_id)}
-                >
-                  {isCancelling && cancellingPoolId === row.pool_id ? "Cancelando..." : "Cancelar"}
-                </Button>
-              </TableCell>
+              </TableHead>
+              <TableHead>Prestación</TableHead>
+              <TableHead>Paciente</TableHead>
+              <TableHead>Prestador anterior</TableHead>
+              <TableHead>Cancelada</TableHead>
+              <TableHead>Motivo</TableHead>
+              <TableHead>Nuevo horario</TableHead>
+              <TableHead>Nuevo prestador</TableHead>
+              <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {data.map((row) => {
+              const tipo = row.prestacion?.tipo_prestacion ?? "";
+              const opciones = tipo ? prestadoresPorTipo[tipo] ?? [] : [];
+              return (
+                <TableRow key={row.pool_id}>
+                  <TableCell>
+                    <Checkbox
+                      aria-label="Seleccionar prestación"
+                      checked={bulkSelection.has(row.pool_id)}
+                      onCheckedChange={checked => toggleRowSelected(row.pool_id, Boolean(checked))}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{row.prestacion?.tipo_prestacion ?? "Sin tipo"}</span>
+                      <span className="text-sm text-muted-foreground">
+                        {row.prestacion ? dateFormatter.format(new Date(row.prestacion.fecha)) : "-"}
+                      </span>
+                      {row.prestacion?.cronico && (
+                        <Badge variant="outline" className="mt-2 w-fit">
+                          Crónica
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <span className="font-medium">{formatPersona(row.paciente)}</span>
+                  </TableCell>
+                  <TableCell>{formatPersona(row.prestadorAnterior)}</TableCell>
+                  <TableCell>
+                    <span className="text-sm text-muted-foreground">
+                      {dateFormatter.format(new Date(row.cancelled_at))}
+                    </span>
+                  </TableCell>
+                  <TableCell>{row.reason}</TableCell>
+                  <TableCell>
+                    <input
+                      type="time"
+                      className="w-[140px] rounded border border-input bg-background px-3 py-1 text-sm"
+                      value={timeSelection[row.pool_id] ?? getTimeForRow(row)}
+                      onChange={(event) =>
+                        setTimeSelection((prev) => ({ ...prev, [row.pool_id]: event.target.value }))
+                      }
+                      disabled={isPending && pendingPoolId === row.pool_id}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Select
+                      value={selection[row.pool_id] ?? ""}
+                      onValueChange={(value) => setSelection((prev) => ({ ...prev, [row.pool_id]: value }))}
+                      disabled={(isPending && pendingPoolId === row.pool_id) || opciones.length === 0}
+                    >
+                      <SelectTrigger className="w-[240px] truncate">
+                        <SelectValue
+                          placeholder={opciones.length ? "Elegí prestador" : "Sin prestadores disponibles"}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {opciones.map((prestador) => (
+                          <SelectItem key={prestador.id} value={prestador.id}>
+                            <span className="flex-1 truncate">
+                              {prestador.apellido}, {prestador.nombre}
+                              {prestador.documento ? ` · DNI ${prestador.documento}` : ""}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  <TableCell className="space-x-2 text-right">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={(isPending && pendingPoolId === row.pool_id) || opciones.length === 0}
+                      onClick={() => handleReassign(row)}
+                    >
+                      {isPending && pendingPoolId === row.pool_id ? "Reasignando..." : "Reasignar"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={isCancelling && cancellingPoolId === row.pool_id}
+                      onClick={() => handleDiscard(row.pool_id)}
+                    >
+                      {isCancelling && cancellingPoolId === row.pool_id ? "Cancelando..." : "Cancelar"}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
