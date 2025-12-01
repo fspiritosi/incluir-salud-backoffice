@@ -2,8 +2,10 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
-import { listPrestaciones } from "@/app/protected/prestaciones/actions";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { listPrestaciones, listPrestacionesParaReasignar, listPrestadoresByEspecialidad } from "@/app/protected/prestaciones/actions";
 import { PrestacionesTable, type PrestacionRow } from "@/components/prestaciones/PrestacionesTable";
+import PrestacionesReassignTable from "@/components/prestaciones/PrestacionesReassignTable";
 
 export default async function PrestacionesPage() {
   const supabase = await createClient();
@@ -11,6 +13,7 @@ export default async function PrestacionesPage() {
   if (claimsError || !claims?.claims) {
     redirect("/auth/login");
   }
+
   const { data: userRes } = await supabase.auth.getUser();
   const userId = userRes?.user?.id;
   let roles: string[] = [];
@@ -23,7 +26,11 @@ export default async function PrestacionesPage() {
   }
   const canCreate = roles.some((r) => ["auditor", "super_admin"].includes(r));
 
-  const { data, error } = await listPrestaciones();
+  const [{ data, error }, { data: poolData, error: poolError }] = await Promise.all([
+    listPrestaciones(),
+    listPrestacionesParaReasignar(),
+  ]);
+
   if (error) {
     return (
       <div className="space-y-4">
@@ -33,10 +40,36 @@ export default async function PrestacionesPage() {
     );
   }
 
+  if (poolError) {
+    console.error("No se pudo cargar la cola de reasignación", poolError);
+  }
+
+  const prestadoresPorTipo: Record<string, { id: string; apellido: string; nombre: string; documento?: string }[]> = {};
+  const tiposNecesarios = Array.from(new Set((poolData || [])
+    .map((row) => row.prestacion?.tipo_prestacion)
+    .filter((tipo): tipo is string => Boolean(tipo))));
+
+  if (tiposNecesarios.length > 0) {
+    await Promise.all(tiposNecesarios.map(async (tipo) => {
+      const { data: prestadoresTipo, error: prestadoresTipoError } = await listPrestadoresByEspecialidad(tipo);
+      if (prestadoresTipoError) {
+        console.error(`No se pudo obtener prestadores para ${tipo}`, prestadoresTipoError);
+        prestadoresPorTipo[tipo] = [];
+        return;
+      }
+      prestadoresPorTipo[tipo] = prestadoresTipo;
+    }));
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Prestaciones</h1>
+        <div>
+          <h1 className="text-2xl font-bold">Prestaciones</h1>
+          <p className="text-sm text-muted-foreground">
+            Gestioná prestaciones activas o reasigná las canceladas automáticamente.
+          </p>
+        </div>
         {canCreate ? (
           <Link href="/protected/prestaciones/crear">
             <Button>Nueva Prestación</Button>
@@ -45,7 +78,26 @@ export default async function PrestacionesPage() {
           <Button disabled title="No tenés permiso para crear prestaciones">Nueva Prestación</Button>
         )}
       </div>
-      <PrestacionesTable data={(data || []) as PrestacionRow[]} />
+
+      <Tabs defaultValue="todas" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="todas">Todas</TabsTrigger>
+          <TabsTrigger value="reasignar">
+            Reasignar
+            <span className="ml-2 rounded-full bg-black/10 px-2 text-xs">
+              {poolData?.length ?? 0}
+            </span>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="todas">
+          <PrestacionesTable data={(data || []) as PrestacionRow[]} />
+        </TabsContent>
+
+        <TabsContent value="reasignar">
+          <PrestacionesReassignTable data={poolData || []} prestadoresPorTipo={prestadoresPorTipo} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

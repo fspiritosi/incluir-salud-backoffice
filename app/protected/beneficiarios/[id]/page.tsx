@@ -37,28 +37,37 @@ function summarizePrestaciones(rows: NonNullable<Awaited<ReturnType<typeof getPr
   const currentYear = now.getFullYear();
   const nextMonthDate = new Date(currentYear, currentMonth + 1, 1);
 
-  const stats = {
+  const summary = {
     total: rows.length,
     cronicas: rows.filter(row => row.cronico).length,
-    thisMonth: 0,
-    nextMonth: 0,
-    currentMonthAmount: 0,
+    estados: {
+      completada: { count: 0, monto: 0 },
+      pendiente: { count: 0, monto: 0 },
+      cancelada: { count: 0, monto: 0 },
+    },
+    nextMonth: { count: 0, monto: 0 },
   };
 
   rows.forEach(row => {
     const fecha = new Date(row.fecha);
-    if (fecha.getFullYear() === currentYear && fecha.getMonth() === currentMonth) {
-      stats.thisMonth += 1;
+    const normalizedEstado = (row.estado || "pendiente").toLowerCase();
+    const bucket = summary.estados[normalizedEstado as keyof typeof summary.estados];
+    if (bucket) {
+      bucket.count += 1;
       if (row.monto != null) {
-        stats.currentMonthAmount += Number(row.monto);
+        bucket.monto += Number(row.monto);
       }
     }
+
     if (fecha.getFullYear() === nextMonthDate.getFullYear() && fecha.getMonth() === nextMonthDate.getMonth()) {
-      stats.nextMonth += 1;
+      summary.nextMonth.count += 1;
+      if (row.monto != null) {
+        summary.nextMonth.monto += Number(row.monto);
+      }
     }
   });
 
-  return stats;
+  return summary;
 }
 
 export default async function BeneficiarioDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -69,6 +78,13 @@ export default async function BeneficiarioDetailPage({ params }: { params: Promi
     redirect("/auth/login");
   }
 
+  const claimsData = (claims?.claims as Record<string, any>) || {};
+  const currentUserName =
+    (claimsData?.user_metadata?.full_name as string | undefined) ??
+    (claimsData?.full_name as string | undefined) ??
+    (claimsData?.email as string | undefined) ??
+    "Usuario";
+
   const beneficiarioRes = await getBeneficiarioById(id);
   if (beneficiarioRes.error || !beneficiarioRes.data) {
     notFound();
@@ -76,6 +92,11 @@ export default async function BeneficiarioDetailPage({ params }: { params: Promi
 
   const prestacionesRes = await getPrestacionesByPaciente(id);
   const prestaciones = prestacionesRes.data ?? [];
+  const today = new Date();
+  const defaultHistoryRange = {
+    startDate: new Date(today.getFullYear(), today.getMonth() - 1, 1).toISOString(),
+    endDate: new Date(today.getFullYear(), today.getMonth() + 2, 1).toISOString(),
+  };
   const summary = summarizePrestaciones(prestaciones);
   const eligibleCronicas = prestaciones.filter(row => {
     const fecha = new Date(row.fecha);
@@ -95,6 +116,7 @@ export default async function BeneficiarioDetailPage({ params }: { params: Promi
       prestador: formatName(row.prestador || undefined),
       texto: row.notas,
       tipo: formatTipo(row.tipo_prestacion),
+      estado: row.estado,
     }));
 
   return (
@@ -139,28 +161,36 @@ export default async function BeneficiarioDetailPage({ params }: { params: Promi
           <CardHeader>
             <CardTitle>Resumen mensual</CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-3 text-center">
-            <div>
-              <p className="text-2xl font-semibold">{summary.thisMonth}</p>
-              <p className="text-xs text-muted-foreground">Prestaciones este mes</p>
+          <CardContent className="space-y-3 text-sm">
+            <div className="grid grid-cols-2 gap-3 text-center">
+              <div className="rounded-md border border-dashed px-3 py-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Historial total</p>
+                <p className="text-lg font-semibold text-foreground">{summary.total}</p>
+              </div>
+              <div className="rounded-md border border-dashed px-3 py-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Crónicas activas</p>
+                <p className="text-lg font-semibold text-foreground">{summary.cronicas}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-2xl font-semibold">{summary.nextMonth}</p>
-              <p className="text-xs text-muted-foreground">Programadas próximo mes</p>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              {[{ label: "Completadas", key: "completada", accent: "text-emerald-600" }, { label: "Pendientes", key: "pendiente", accent: "text-amber-600" }, { label: "Canceladas", key: "cancelada", accent: "text-rose-600" }].map(item => (
+                <div key={item.key} className="rounded-md bg-muted/40 px-2 py-2">
+                  <p className={`text-[0.65rem] uppercase tracking-wide ${item.accent}`}>{item.label}</p>
+                  <p className="text-lg font-semibold text-foreground">
+                    {summary.estados[item.key as keyof typeof summary.estados].count}
+                  </p>
+                  <p className="text-[0.7rem] text-muted-foreground">{currencyFormatter.format(summary.estados[item.key as keyof typeof summary.estados].monto)}</p>
+                </div>
+              ))}
             </div>
-            <div>
-              <p className="text-2xl font-semibold">{summary.total}</p>
-              <p className="text-xs text-muted-foreground">Historial total</p>
-            </div>
-            <div>
-              <p className="text-2xl font-semibold">{summary.cronicas}</p>
-              <p className="text-xs text-muted-foreground">Crónicas activas</p>
-            </div>
-            <div className="col-span-2 border-t pt-3">
-              <p className="text-lg font-semibold">
-                {currencyFormatter.format(summary.currentMonthAmount)}
-              </p>
-              <p className="text-xs text-muted-foreground">Monto mensual (mes en curso)</p>
+
+            <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-center">
+              <p className="text-xs uppercase tracking-wide text-primary">Próximo mes</p>
+              <div className="mt-1 flex items-center justify-between text-sm font-semibold text-primary">
+                <span>{summary.nextMonth.count} programadas</span>
+                <span>{currencyFormatter.format(summary.nextMonth.monto)}</span>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -170,7 +200,7 @@ export default async function BeneficiarioDetailPage({ params }: { params: Promi
             <CardTitle>Notas</CardTitle>
           </CardHeader>
           <CardContent>
-            <PacienteNotesPlaceholder notes={notes} />
+            <PacienteNotesPlaceholder notes={notes} currentUserName={currentUserName} />
           </CardContent>
         </Card>
       </div>
@@ -183,7 +213,11 @@ export default async function BeneficiarioDetailPage({ params }: { params: Promi
           </p>
         </CardHeader>
         <CardContent>
-          <PatientHistoryTable data={prestaciones} />
+          <PatientHistoryTable
+            pacienteId={id}
+            data={prestaciones}
+            defaultRange={defaultHistoryRange}
+          />
         </CardContent>
       </Card>
     </div>

@@ -90,18 +90,32 @@ export const PrestacionesTable = ({ data }: { data: PrestacionRow[] }) => {
   const [tipoFilterSearch, setTipoFilterSearch] = useState('');
   const [pacienteFilterSearch, setPacienteFilterSearch] = useState('');
   const [prestadorFilterSearch, setPrestadorFilterSearch] = useState('');
+  const [diaFilterSearch, setDiaFilterSearch] = useState('');
+
+  const enhancedData = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat("es-AR", { weekday: "long" });
+    return data.map((item) => {
+      const fechaDate = new Date(item.fecha);
+      const weekday = formatter.format(fechaDate);
+      const capitalizedWeekday = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+      return {
+        ...item,
+        dia_semana: capitalizedWeekday,
+      };
+    });
+  }, [data]);
 
   const tipoOptions = useMemo(() => {
     const set = new Set<string>();
-    data.forEach(item => {
+    enhancedData.forEach(item => {
       if (item.tipo_prestacion) set.add(item.tipo_prestacion);
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [data]);
+  }, [enhancedData]);
 
   const pacientesOptions = useMemo(() => {
     const map = new Map<string, string>();
-    data.forEach((item) => {
+    enhancedData.forEach((item) => {
       if (item.paciente?.id) {
         const fullName = `${item.paciente.apellido}, ${item.paciente.nombre}`;
         map.set(item.paciente.id, fullName);
@@ -110,11 +124,11 @@ export const PrestacionesTable = ({ data }: { data: PrestacionRow[] }) => {
     return Array.from(map.entries())
       .map(([id, label]) => ({ id, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [data]);
+  }, [enhancedData]);
 
   const prestadoresOptions = useMemo(() => {
     const map = new Map<string, string>();
-    data.forEach((item) => {
+    enhancedData.forEach((item) => {
       if (item.prestador?.id) {
         const fullName = `${item.prestador.apellido ?? ''} ${item.prestador.nombre ?? ''}`.trim();
         map.set(item.prestador.id, fullName || item.prestador.id);
@@ -123,14 +137,25 @@ export const PrestacionesTable = ({ data }: { data: PrestacionRow[] }) => {
     return Array.from(map.entries())
       .map(([id, label]) => ({ id, label: label || 'Prestador sin nombre' }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [data]);
+  }, [enhancedData]);
 
-  const columns: ColumnDef<PrestacionRow>[] = [
+  const diasSemanaOptions = useMemo(() => {
+    const set = new Set<string>();
+    enhancedData.forEach(item => {
+      if (item.dia_semana) set.add(item.dia_semana);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [enhancedData]);
+
+  const columns: ColumnDef<PrestacionRow & { dia_semana?: string }>[] = [
     {
-      id: 'select',
+      id: "select",
       header: ({ table }) => {
-        const checked = table.getIsAllPageRowsSelected() ? true : 
-          table.getIsSomePageRowsSelected() ? 'indeterminate' : false;
+        const checked = table.getIsAllPageRowsSelected()
+          ? true
+          : table.getIsSomePageRowsSelected()
+            ? "indeterminate"
+            : false;
         return (
           <Checkbox
             checked={checked as CheckedState}
@@ -177,6 +202,21 @@ export const PrestacionesTable = ({ data }: { data: PrestacionRow[] }) => {
         if (inicio && !fin) return fecha >= toStart(inicio);
         if (!inicio && fin) return fecha <= toEnd(fin);
         return fecha >= toStart(inicio) && fecha <= toEnd(fin);
+      },
+    },
+    {
+      accessorKey: "dia_semana",
+      header: "Día",
+      cell: ({ row }) => {
+        const value = row.getValue("dia_semana") as string | undefined;
+        return value || "-";
+      },
+      enableColumnFilter: true,
+      filterFn: (row, columnId, filterValue) => {
+        const values = (filterValue as string[]) || [];
+        if (!Array.isArray(values) || values.length === 0) return true;
+        const value = (row.getValue(columnId) as string | undefined) ?? "";
+        return values.includes(value);
       },
     },
     {
@@ -363,7 +403,7 @@ export const PrestacionesTable = ({ data }: { data: PrestacionRow[] }) => {
   };
 
   const table = useReactTable({
-    data,
+    data: enhancedData,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -632,7 +672,91 @@ export const PrestacionesTable = ({ data }: { data: PrestacionRow[] }) => {
         </DropdownMenu>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">Inicio (desde)</span>
+          <Input
+            type="date"
+            className="w-[150px]"
+            value={fechaInicio}
+            onChange={(event) => {
+              const value = event.target.value;
+              setFechaInicio(value);
+              table.getColumn("fecha")?.setFilterValue([value, fechaFin]);
+            }}
+            placeholder="Desde"
+            aria-label="Fecha de inicio"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">Fin (hasta)</span>
+          <Input
+            type="date"
+            className="w-[150px]"
+            value={fechaFin}
+            onChange={(event) => {
+              const value = event.target.value;
+              setFechaFin(value);
+              table.getColumn("fecha")?.setFilterValue([fechaInicio, value]);
+            }}
+            placeholder="Hasta"
+            aria-label="Fecha de fin"
+          />
+        </div>
+      </div>
+
       <div className="flex items-center gap-2 overflow-x-auto py-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="w-[180px] justify-between">
+              <span className="truncate text-left">
+                {(() => {
+                  const selected = (table.getColumn("dia_semana")?.getFilterValue() as string[]) || [];
+                  if (!selected?.length) return "Días...";
+                  if (selected.length === 1) return selected[0];
+                  return `${selected.length} seleccionados`;
+                })()}
+              </span>
+              <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-64 p-2">
+            <Input
+              placeholder="Buscar día"
+              value={diaFilterSearch}
+              onChange={(e) => setDiaFilterSearch(e.target.value)}
+              className="mb-2"
+            />
+            <div className="max-h-[320px] overflow-y-auto space-y-2">
+              {diasSemanaOptions
+                .filter(option => option.toLowerCase().includes(diaFilterSearch.toLowerCase().trim()))
+                .map(option => {
+                  const selected = (table.getColumn("dia_semana")?.getFilterValue() as string[]) || [];
+                  const isChecked = selected.includes(option);
+                  return (
+                    <label key={option} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={() => {
+                          const column = table.getColumn("dia_semana");
+                          if (!column) return;
+                          const current = (column.getFilterValue() as string[]) || [];
+                          const next = isChecked
+                            ? current.filter((value) => value !== option)
+                            : [...current, option];
+                          column.setFilterValue(next.length ? next : undefined);
+                        }}
+                      />
+                      <span className="truncate">{option}</span>
+                    </label>
+                  );
+                })}
+              {diasSemanaOptions.filter(option => option.toLowerCase().includes(diaFilterSearch.toLowerCase().trim())).length === 0 && (
+                <p className="text-sm text-muted-foreground">Sin resultados</p>
+              )}
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="w-[180px] justify-between">
@@ -814,26 +938,6 @@ export const PrestacionesTable = ({ data }: { data: PrestacionRow[] }) => {
             </SelectContent>
           </Select>
         </div>
-        <Input
-          type="date"
-          className="w-[140px]"
-          placeholder="Desde..."
-          value={fechaInicio}
-          onChange={(e) => {
-            setFechaInicio(e.target.value);
-            table.getColumn("fecha")?.setFilterValue([e.target.value, fechaFin]);
-          }}
-        />
-        <Input
-          type="date"
-          className="w-[140px]"
-          placeholder="Hasta..."
-          value={fechaFin}
-          onChange={(e) => {
-            setFechaFin(e.target.value);
-            table.getColumn("fecha")?.setFilterValue([fechaInicio, e.target.value]);
-          }}
-        />
       </div>
 
       <DataTable table={table} isLoading={loading} />

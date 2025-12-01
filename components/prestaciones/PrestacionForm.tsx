@@ -68,6 +68,14 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
     try { return new Date(dtLocal).toISOString(); } catch { return ''; }
   }
 
+  function toLocalInputValue(iso?: string | null) {
+    if (!iso) return '';
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '';
+    const tzOffset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
+  }
+
   function generateDates() {
     const out: string[] = [];
     if (bulkModeType === 'cada-n') {
@@ -105,7 +113,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
     }
     setGeneratedDates(out);
     if (out[0]) {
-      form.setValue('fecha', new Date(out[0]).toISOString().slice(0,16));
+      form.setValue('fecha', toLocalInputValue(out[0]));
     }
   }
 
@@ -114,7 +122,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
     defaultValues: {
       tipo_prestacion: initialData?.tipo_prestacion || '',
       obra_social_id: initialData?.obra_social_id || '',
-      fecha: initialData?.fecha ? new Date(initialData.fecha).toISOString().slice(0,16) : '',
+      fecha: toLocalInputValue(initialData?.fecha),
       estado: initialData?.estado || 'pendiente',
       cronico: initialData?.cronico ?? false,
       monto: initialData?.monto ?? undefined,

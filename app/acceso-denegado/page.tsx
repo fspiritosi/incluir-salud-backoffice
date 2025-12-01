@@ -5,9 +5,14 @@ export default function AccesoDenegado() {
         <h1 className="text-2xl font-bold text-red-600 dark:text-red-400">
           Acceso denegado
         </h1>
-        <p className="mt-4 text-gray-700 dark:text-gray-300">
-          No tienes un rol permitido para ingresar al sistema.
-        </p>
+        <div className="mt-4 space-y-3 text-gray-700 dark:text-gray-300">
+          <p>
+            Si sos proveedor y te registraste desde la app, sólo tenés permisos para operar allí.
+          </p>
+          <p>
+            Si sos parte del equipo de Incluir Salud y te registraste desde la web, comunicate con un administrador para que te asigne el rol correspondiente al backoffice.
+          </p>
+        </div>
       </div>
     </div>
   );
