@@ -100,9 +100,9 @@ export default function BackofficeUsersTable({ users, currentUserId }: Props) {
   const sortedUsers = useMemo(() => users, [users]);
 
   return (
-    <div className="overflow-x-auto rounded-lg border bg-white">
-      <table className="w-full text-sm">
-        <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+    <div className="overflow-x-auto rounded-xl border border-border/60 bg-card shadow-sm transition-colors">
+      <table className="w-full text-sm text-foreground">
+        <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground dark:bg-muted/30">
           <tr>
             <th className="px-4 py-3 font-medium">Usuario</th>
             <th className="px-4 py-3 font-medium">Documento</th>
@@ -119,7 +119,10 @@ export default function BackofficeUsersTable({ users, currentUserId }: Props) {
             const isRowBusy = pending?.userId === user.id && isPending;
 
             return (
-              <tr key={user.id} className="border-t even:bg-muted/20">
+              <tr
+                key={user.id}
+                className="border-t border-border/60 bg-card transition-colors hover:bg-muted/40 even:bg-muted/30 dark:bg-background/80 dark:hover:bg-muted/30"
+              >
                 <td className="px-4 py-4 align-top">
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -148,7 +151,11 @@ export default function BackofficeUsersTable({ users, currentUserId }: Props) {
                         pending?.userId === user.id && pending.role === role && pending.type === "remove" && isPending;
                       const isSelfSuperAdminRole = isSelf && role === "super_admin";
                       return (
-                        <Badge key={role} variant="outline" className="flex items-center gap-1">
+                        <Badge
+                          key={role}
+                          variant="outline"
+                          className="flex items-center gap-1 border-border/60 text-foreground dark:border-primary/30 dark:bg-primary/5 dark:text-primary"
+                        >
                           <Shield className="h-3 w-3" />
                           {ROLE_LABELS[role]}
                           <Button
