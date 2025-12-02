@@ -351,6 +351,67 @@ export function StatsCards({ initialStats }: { initialStats: DashboardStats }) {
         })}
       </div>
 
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow dark:border-gray-800 dark:bg-gray-900/40">
+          <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Progreso</h2>
+          <div className="space-y-4">
+            <div>
+              <div className="mb-2 flex justify-between">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Completadas</span>
+                <span className="text-sm font-semibold text-gray-900 dark:text-white">{stats.porcentajeCompletado}%</span>
+              </div>
+              <div className="h-4 w-full rounded-full bg-gray-200 dark:bg-gray-800">
+                <div
+                  className="h-4 rounded-full bg-green-600 transition-all duration-500 dark:bg-green-500"
+                  style={{ width: `${stats.porcentajeCompletado}%` }}
+                />
+              </div>
+            </div>
+            <div className="mt-6 grid grid-cols-2 gap-4">
+              <div className="rounded-lg bg-green-50 p-4 text-center dark:bg-green-900/20">
+                <p className="text-2xl font-bold text-green-600 dark:text-green-400">{stats.completadas}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Completadas</p>
+              </div>
+              <div className="rounded-lg bg-blue-50 p-4 text-center dark:bg-blue-900/20">
+                <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.pendientes}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Pendientes</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow dark:border-gray-800 dark:bg-gray-900/40">
+          <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Tipos de Prestación</h2>
+          <div className="space-y-4">
+            {Object.entries(stats.prestacionesPorTipo || {}).length === 0 && (
+              <p className="text-sm text-muted-foreground">No hay datos disponibles en el rango seleccionado.</p>
+            )}
+            {Object.entries(stats.prestacionesPorTipo || {}).map(([tipo, cantidad]) => {
+              const porcentaje = stats.total > 0 ? (cantidad / stats.total) * 100 : 0;
+              return (
+                <div key={tipo} className="space-y-1">
+                  <div className="flex items-center justify-between text-sm font-medium text-gray-700 dark:text-gray-300">
+                    <span>{tipo}</span>
+                    <span className="text-xs text-muted-foreground">{cantidad} prest.</span>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="h-4 flex-1 rounded-full bg-gray-200 dark:bg-gray-800">
+                      <div
+                        className="h-4 rounded-full bg-blue-600 transition-all duration-500 dark:bg-blue-400"
+                        style={{ width: `${porcentaje}%` }}
+                      />
+                    </div>
+                    <span className="w-12 text-right text-sm font-semibold text-gray-900 dark:text-white">
+                      {Math.round(porcentaje)}%
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
       <Dialog open={!!selectedCard} onOpenChange={open => !open && setActiveCard(null)}>
         <DialogContent className="max-w-6xl w-[95vw] max-h-[90vh] overflow-hidden p-0">
           <div className="flex h-full max-h-[90vh] flex-col">
