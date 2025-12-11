@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { Upload } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { BeneficiariosTable } from "@/components/beneficiarios/BeneficiariosTable";
 import { Button } from "@/components/ui/button";
@@ -38,15 +39,28 @@ export default async function BeneficiariosPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">Beneficiarios</h1>
-        {canCreate ? (
-          <Link href="/protected/beneficiarios/crear">
-            <Button>Nuevo Beneficiario</Button>
-          </Link>
-        ) : (
-          <Button disabled title="No tenés permiso para crear beneficiarios">Nuevo</Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {canCreate ? (
+            <>
+              <Link href="/protected/beneficiarios/importar">
+                <Button variant="outline">
+                  <Upload className="mr-2 h-4 w-4" />
+                  Importar padrón
+                </Button>
+              </Link>
+              <Link href="/protected/beneficiarios/crear">
+                <Button>Nuevo Beneficiario</Button>
+              </Link>
+            </>
+          ) : (
+            <>
+              <Button disabled title="No tenés permiso para importar">Importar</Button>
+              <Button disabled title="No tenés permiso para crear beneficiarios">Nuevo</Button>
+            </>
+          )}
+        </div>
       </div>
       <BeneficiariosTable data={(pacientes || []) as any} />
     </div>
