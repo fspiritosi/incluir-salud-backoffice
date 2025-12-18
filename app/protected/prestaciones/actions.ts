@@ -541,9 +541,23 @@ export async function listPacientesForSelect() {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("pacientes")
-    .select("id, nombre, apellido, documento")
+    .select("id, nombre, apellido, documento, ubicacion")
     .order("apellido", { ascending: true });
-  return { data, error } as { data: { id: string; nombre: string; apellido: string }[] | null; error: any };
+  const mapped =
+    data?.map((row) => ({
+      id: row.id,
+      nombre: row.nombre,
+      apellido: row.apellido,
+      documento: row.documento ?? undefined,
+      tiene_ubicacion: Boolean(row.ubicacion),
+    })) ?? null;
+  return {
+    data: mapped,
+    error,
+  } as {
+    data: { id: string; nombre: string; apellido: string; documento?: string; tiene_ubicacion: boolean }[] | null;
+    error: any;
+  };
 }
 
 export async function listObrasSocialesForSelect() {
