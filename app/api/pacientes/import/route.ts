@@ -68,6 +68,7 @@ type CandidateRow = {
   forceUbicacion: boolean;
   needsGeocode: boolean;
   addressSignature: string;
+  numeroEsCero: boolean;
   skip?: boolean;
 };
 
@@ -229,7 +230,13 @@ const normalizeAddressComponent = (value: unknown) => {
   const cleaned = toStringSafe(value);
   if (!cleaned) return "";
   const normalized = cleaned.toLowerCase();
-  if (normalized === "0" || normalized === "00" || normalized === "-" || normalized === "n/a") {
+  if (normalized === "-" || normalized === "n/a") {
+    return "";
+  }
+  if (normalized === "s/n") {
+    return "S/N";
+  }
+  if (normalized === "0" || normalized === "00") {
     return "";
   }
   return cleaned;
@@ -237,16 +244,19 @@ const normalizeAddressComponent = (value: unknown) => {
 
 const buildDireccion = (row: Record<string, unknown>) => {
   const calle = toStringSafe(row.Dom_calle);
-  const numero = normalizeAddressComponent(row.Dom_Nro);
+  const numeroRaw = toStringSafe(row.Dom_Nro);
+  const numeroNormalized = normalizeAddressComponent(numeroRaw);
   const piso = normalizeAddressComponent(row.Dom_Piso);
   const dpto = normalizeAddressComponent(row.Dom_Dpto);
   const parts = [
     calle,
-    numero ? (numero.toLowerCase() === "s/n" ? "S/N" : `#${numero}`) : "",
+    numeroNormalized ? (numeroNormalized === "S/N" ? numeroNormalized : `#${numeroNormalized}`) : "",
     piso ? `Piso ${piso}` : "",
     dpto ? `Dpto ${dpto}` : "",
   ].filter(Boolean);
-  return parts.join(" ").trim();
+  const direccion = parts.join(" ").trim();
+  const numeroEsCero = numeroRaw.trim() !== "" && numeroRaw.replace(/[^0-9]/g, "") === "0";
+  return { direccion, numeroEsCero };
 };
 
 const sanitizeDocumento = (value: unknown) => {
@@ -361,7 +371,7 @@ const mapRowToBeneficiario = (
   row: Record<string, unknown>,
   rowNumber: number,
   lookups: Lookups,
-): { data?: BeneficiarioInput; error?: RowError } => {
+): { data?: BeneficiarioInput; numeroEsCero?: boolean; error?: RowError } => {
   const { nombre, apellido } = splitApenom(toStringSafe(row.apenom));
   if (!nombre || !apellido) {
     return { error: { row: rowNumber, message: "apenom vacío o inválido" } };
@@ -370,7 +380,7 @@ const mapRowToBeneficiario = (
   if (!documento) {
     return { error: { row: rowNumber, message: "numero_doc vacío" } };
   }
-  const direccion = buildDireccion(row);
+  const { direccion, numeroEsCero } = buildDireccion(row);
   if (!direccion) {
     return { error: { row: rowNumber, message: "Dirección incompleta" } };
   }
@@ -411,7 +421,7 @@ const mapRowToBeneficiario = (
     ubicacion: null,
   };
 
-  return { data };
+  return { data, numeroEsCero };
 };
 
 const validateHeaders = (headers: unknown[]): string[] => {
@@ -478,7 +488,7 @@ export async function POST(req: Request) {
 
     rows.forEach((row, index) => {
       const rowNumber = index + 2; // +1 por header y +1 para base 1
-      const { data, error } = mapRowToBeneficiario(row, rowNumber, lookups);
+      const { data, numeroEsCero, error } = mapRowToBeneficiario(row, rowNumber, lookups);
       if (error) {
         errors.push(error);
         return;
@@ -501,6 +511,7 @@ export async function POST(req: Request) {
           data.provincia,
           data.codigo_postal,
         ),
+        numeroEsCero: Boolean(numeroEsCero),
       });
     });
 
@@ -541,6 +552,11 @@ export async function POST(req: Request) {
 
     const geocodeQueue: CandidateRow[] = [];
     candidates.forEach((candidate) => {
+      if (candidate.numeroEsCero) {
+        candidate.forceUbicacion = false;
+        candidate.needsGeocode = false;
+        return;
+      }
       const existing = existingMap.get(candidate.documento);
       if (!existing) {
         candidate.forceUbicacion = true;
