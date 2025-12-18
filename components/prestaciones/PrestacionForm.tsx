@@ -28,10 +28,18 @@ import { useToast } from '@/components/ui/use-toast';
 import { ChevronDown } from 'lucide-react';
 import { listPrestadoresByEspecialidad } from '@/app/protected/prestaciones/actions';
 
+type PrestacionFormPaciente = {
+  id: string;
+  nombre: string;
+  apellido: string;
+  documento?: string;
+  tiene_ubicacion: boolean;
+};
+
 type PrestacionFormProps = {
   initialData?: any;
   isEditing?: boolean;
-  pacientes: { id: string; nombre: string; apellido: string; documento?: string }[];
+  pacientes: PrestacionFormPaciente[];
   obrasSociales: { id: string; nombre: string }[];
   prestadores: { id: string; apellido: string; nombre: string; documento?: string }[];
 };
@@ -158,6 +166,11 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
   const onSubmit = async (values: PrestacionFormValues) => {
     try {
       setLoading(true);
+
+      const selectedPaciente = pacientes.find((p) => p.id === values.paciente_id);
+      if (!selectedPaciente?.tiene_ubicacion) {
+        throw new Error('El paciente seleccionado no tiene geolocalización. Asignala antes de crear la prestación.');
+      }
 
       if (bulkMode) {
         if (generatedDates.length === 0) {

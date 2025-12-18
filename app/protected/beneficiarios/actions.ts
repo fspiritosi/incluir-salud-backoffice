@@ -70,15 +70,138 @@ export async function getBeneficiarioById(id: string) {
   return { data, error };
 }
 
-export async function listBeneficiarios() {
+type ListBeneficiariosParams = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  ciudades?: string[];
+  provincias?: string[];
+  activo?: "todos" | "si" | "no";
+  ids?: string[];
+};
+
+const DEFAULT_PAGE = 1;
+const DEFAULT_PAGE_SIZE = 100;
+const MAX_PAGE_SIZE = 1000;
+
+const escapeIlikeValue = (value: string) => value.replace(/[%_\\]/g, (match) => `\\${match}`);
+
+export async function listBeneficiarios(params: ListBeneficiariosParams = {}) {
   const supabase = await createClient();
-  const { data, error } = await supabase
+  const page = Math.max(DEFAULT_PAGE, Number(params.page) || DEFAULT_PAGE);
+  const rawPageSize = Number(params.pageSize) || DEFAULT_PAGE_SIZE;
+  const pageSize = Math.min(Math.max(1, rawPageSize), MAX_PAGE_SIZE);
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  const { search, ciudades, provincias, activo, ids } = params;
+
+  let query = supabase
     .from("pacientes")
     .select(
-      "id, nombre, apellido, documento, direccion_completa, ciudad, provincia, activo"
-    )
+      "id, nombre, apellido, documento, direccion_completa, ciudad, provincia, activo, ubicacion",
+      { count: "exact" }
+    );
+
+  if (search?.trim()) {
+    const sanitized = escapeIlikeValue(search.trim());
+    const term = `%${sanitized}%`;
+    query = query.or(
+      `nombre.ilike.${term},apellido.ilike.${term},documento.ilike.${term}`
+    );
+  }
+
+  if (ciudades && ciudades.length > 0) {
+    query = query.in("ciudad", ciudades);
+  }
+
+  if (provincias && provincias.length > 0) {
+    query = query.in("provincia", provincias);
+  }
+
+  if (ids && ids.length > 0) {
+    query = query.in("id", ids);
+  }
+
+  if (activo === "si") {
+    query = query.eq("activo", true);
+  } else if (activo === "no") {
+    query = query.eq("activo", false);
+  }
+
+  const { data, error, count } = await query
+    .order("apellido", { ascending: true })
+    .range(from, to);
+  const enriched = (data || []).map((row) => ({
+    ...row,
+    tiene_ubicacion: Boolean(row.ubicacion),
+  }));
+  return { data: enriched, total: count ?? enriched.length, error };
+}
+
+type SearchBeneficiariosParams = {
+  query?: string;
+  page?: number;
+  pageSize?: number;
+  includeInactivos?: boolean;
+  ids?: string[];
+};
+
+const DEFAULT_SEARCH_PAGE_SIZE = 25;
+const MAX_SEARCH_PAGE_SIZE = 100;
+
+export async function searchBeneficiariosIdentidad(
+  params: SearchBeneficiariosParams = {}
+) {
+  const supabase = await createClient();
+  const page = Math.max(1, Number(params.page) || 1);
+  const rawPageSize = Number(params.pageSize) || DEFAULT_SEARCH_PAGE_SIZE;
+  const pageSize = Math.min(Math.max(1, rawPageSize), MAX_SEARCH_PAGE_SIZE);
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  let query = supabase
+    .from("pacientes")
+    .select("id, nombre, apellido, documento, activo", { count: "exact" })
     .order("apellido", { ascending: true });
-  return { data, error };
+
+  if (params.ids && params.ids.length > 0) {
+    query = query.in("id", params.ids);
+  }
+
+  if (params.query?.trim()) {
+    const sanitized = escapeIlikeValue(params.query.trim());
+    const term = `%${sanitized}%`;
+    query = query.or(
+      `nombre.ilike.${term},apellido.ilike.${term},documento.ilike.${term}`
+    );
+  }
+
+  if (!params.includeInactivos) {
+    query = query.eq("activo", true);
+  }
+
+  if (params.ids && params.ids.length > 0) {
+    const { data, error } = await query;
+    const payload = data || [];
+    return {
+      data: payload,
+      total: payload.length,
+      page: 1,
+      pageSize: payload.length || params.ids.length,
+      error,
+    };
+  }
+
+  const { data, error, count } = await query.range(from, to);
+
+  return {
+    data: data || [],
+    total: count ?? data?.length ?? 0,
+    page,
+    pageSize,
+    error,
+  };
 }
 
 export type BeneficiarioInput = {
