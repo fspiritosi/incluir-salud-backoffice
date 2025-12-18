@@ -48,11 +48,11 @@ export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
       href: '/protected/prestadores',
       icon: UserCog,
     },
-    {
-      name: 'Auditoría',
-      href: '/protected/auditoria',
-      icon: FileSearch,
-    },
+    // {
+    //   name: 'Auditoría',
+    //   href: '/protected/auditoria',
+    //   icon: FileSearch,
+    // },
     {
       name: 'Reportes',
       href: '/protected/reportes',
