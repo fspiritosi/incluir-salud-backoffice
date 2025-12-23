@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { PrestacionForm } from "@/components/prestaciones/PrestacionForm";
-import { getPrestacionById, listObrasSocialesForSelect, listPacientesForSelect, listPrestadoresForSelect } from "@/app/protected/prestaciones/actions";
+import { getPrestacionById, listCentrosForSelect, listObrasSocialesForSelect, listPacientesForSelect, listPrestadoresForSelect } from "@/app/protected/prestaciones/actions";
 
 export default async function EditarPrestacionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -26,11 +26,12 @@ export default async function EditarPrestacionPage({ params }: { params: Promise
     );
   }
 
-  const [{ data, error }, { data: pacientes }, { data: obrasSociales }, { data: prestadores }] = await Promise.all([
+  const [{ data, error }, { data: pacientes }, { data: obrasSociales }, { data: prestadores }, { data: centros }] = await Promise.all([
     getPrestacionById(id),
     listPacientesForSelect(),
     listObrasSocialesForSelect(),
     listPrestadoresForSelect(),
+    listCentrosForSelect(),
   ]);
 
   if (error || !data) {
@@ -55,7 +56,7 @@ export default async function EditarPrestacionPage({ params }: { params: Promise
         Volver a la lista de prestaciones
       </Link>
       <h1 className="text-3xl font-bold tracking-tight mb-6">Editar Prestación</h1>
-      <PrestacionForm initialData={data} isEditing pacientes={pacientes || []} obrasSociales={obrasSociales || []} prestadores={prestadores || []} />
+      <PrestacionForm initialData={data} isEditing pacientes={pacientes || []} obrasSociales={obrasSociales || []} prestadores={prestadores || []} centros={centros || []} />
     </div>
   );
 }

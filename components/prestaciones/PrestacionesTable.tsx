@@ -46,6 +46,7 @@ export type PrestacionRow = {
   estado: string | null;
   monto: number | null;
   cronico?: boolean | null;
+  sentido_transporte?: string | null;
   user_id?: string | null;
   prestador?: {
     id: string;
@@ -187,6 +188,20 @@ export const PrestacionesTable = ({ data }: { data: PrestacionRow[] }) => {
         if (!value) return false;
         return values.includes(value);
       },
+    },
+    {
+      accessorKey: "sentido_transporte",
+      header: "Sentido",
+      cell: ({ row }) => {
+        const tipo = (row.getValue("tipo_prestacion") as string) || "";
+        if (tipo !== "Transporte") return "-";
+        const sentido = (row.getValue("sentido_transporte") as string | null) || "-";
+        if (sentido === "ida") return "Ida";
+        if (sentido === "vuelta") return "Vuelta";
+        if (sentido === "ida_y_vuelta") return "Ida y vuelta";
+        return sentido;
+      },
+      enableColumnFilter: false,
     },
     {
       accessorKey: "fecha",

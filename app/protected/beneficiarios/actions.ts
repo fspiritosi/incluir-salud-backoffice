@@ -162,7 +162,7 @@ export async function searchBeneficiariosIdentidad(
 
   let query = supabase
     .from("pacientes")
-    .select("id, nombre, apellido, documento, activo", { count: "exact" })
+    .select("id, nombre, apellido, documento, activo, ubicacion", { count: "exact" })
     .order("apellido", { ascending: true });
 
   if (params.ids && params.ids.length > 0) {
@@ -373,15 +373,41 @@ export async function clonePrestacionesCronicasPaciente(pacienteId: string) {
   const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   const followingMonthStart = new Date(now.getFullYear(), now.getMonth() + 2, 1);
 
-  const { data: cronicas, error } = await supabase
-    .from("prestaciones")
-    .select(
-      "id, tipo_prestacion, fecha, estado, monto, descripcion, notas, user_id, obra_social_id, cronico"
-    )
-    .eq("paciente_id", pacienteId)
-    .eq("cronico", true)
-    .gte("fecha", currentMonthStart.toISOString())
-    .lt("fecha", nextMonthStart.toISOString());
+  const selectWithTransporte =
+    "id, tipo_prestacion, fecha, estado, monto, descripcion, notas, user_id, obra_social_id, cronico, centro_id, sentido_transporte";
+  const selectBase =
+    "id, tipo_prestacion, fecha, estado, monto, descripcion, notas, user_id, obra_social_id, cronico, centro_id";
+
+  let cronicas: any[] | null = null;
+  let error: any = null;
+
+  {
+    const res = await supabase
+      .from("prestaciones")
+      .select(selectWithTransporte)
+      .eq("paciente_id", pacienteId)
+      .eq("cronico", true)
+      .gte("fecha", currentMonthStart.toISOString())
+      .lt("fecha", nextMonthStart.toISOString());
+    cronicas = res.data as any[] | null;
+    error = res.error;
+  }
+
+  if (error) {
+    const msg = String((error as any)?.message || "").toLowerCase();
+    const isMissingColumn = msg.includes("sentido_transporte") || msg.includes("column");
+    if (isMissingColumn) {
+      const res2 = await supabase
+        .from("prestaciones")
+        .select(selectBase)
+        .eq("paciente_id", pacienteId)
+        .eq("cronico", true)
+        .gte("fecha", currentMonthStart.toISOString())
+        .lt("fecha", nextMonthStart.toISOString());
+      cronicas = res2.data as any[] | null;
+      error = res2.error;
+    }
+  }
 
   if (error) {
     throw error;
@@ -429,18 +455,25 @@ export async function clonePrestacionesCronicasPaciente(pacienteId: string) {
     return { created: 0, skipped: candidates.length };
   }
 
-  const payload = rowsToInsert.map(({ source, targetDate }) => ({
-    tipo_prestacion: source.tipo_prestacion,
-    fecha: targetDate.toISOString(),
-    estado: source.estado ?? "pendiente",
-    monto: source.monto,
-    descripcion: source.descripcion,
-    notas: source.notas,
-    paciente_id: pacienteId,
-    user_id: source.user_id,
-    obra_social_id: source.obra_social_id,
-    cronico: true,
-  }));
+  const payload = rowsToInsert.map(({ source, targetDate }) => {
+    const row: any = {
+      tipo_prestacion: source.tipo_prestacion,
+      fecha: targetDate.toISOString(),
+      estado: source.estado ?? "pendiente",
+      monto: source.monto,
+      descripcion: source.descripcion,
+      notas: source.notas,
+      paciente_id: pacienteId,
+      user_id: source.user_id,
+      obra_social_id: source.obra_social_id,
+      centro_id: (source as any).centro_id ?? null,
+      cronico: true,
+    };
+    if ((source as any).sentido_transporte !== undefined) {
+      row.sentido_transporte = (source as any).sentido_transporte;
+    }
+    return row;
+  });
 
   const { error: insertError } = await supabase.from("prestaciones").insert(payload);
   if (insertError) {
