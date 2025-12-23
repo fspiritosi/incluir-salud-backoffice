@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 
-export type RoleName = "usuario" | "administrativo" | "auditor" | "super_admin";
+export type RoleName = "usuario" | "administrativo" | "auditor" | "super_admin" | "transporte";
 
 export function useBackofficeRoles() {
   const [roles, setRoles] = useState<RoleName[]>([]);

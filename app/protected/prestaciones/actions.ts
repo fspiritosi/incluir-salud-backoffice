@@ -15,6 +15,8 @@ export type PrestacionInput = {
   notas?: string | null;
   paciente_id?: string | null;
   user_id: string; // selected provider user id (FK -> auth.users.id)
+  centro_id?: string | null;
+  sentido_transporte?: 'ida' | 'vuelta' | 'ida_y_vuelta' | null;
 };
 
 function getAdminSupabase() {
@@ -75,7 +77,7 @@ export async function listPrestaciones() {
   // Primero obtenemos las prestaciones base
   const { data: prestaciones, error } = await supabase
     .from("prestaciones")
-    .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico")
+    .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico, sentido_transporte")
     .order("fecha", { ascending: false });
 
   if (error) {
@@ -116,6 +118,7 @@ export async function listPrestaciones() {
     monto: p.monto,
     user_id: p.user_id,
     cronico: p.cronico,
+    sentido_transporte: (p as any).sentido_transporte ?? null,
     paciente: p.paciente_id ? pacientesMap.get(p.paciente_id) || null : null,
     prestador: p.user_id ? prestadoresMap.get(p.user_id) || null : null,
   }));
@@ -127,6 +130,7 @@ export async function listPrestaciones() {
       fecha: string;
       estado: string | null;
       monto: number | null;
+      sentido_transporte?: string | null;
       user_id?: string | null;
       paciente: { id: string; nombre: string; apellido: string; documento: string } | null;
       prestador: { id: string; nombre: string; apellido: string; documento?: string } | null;
@@ -140,11 +144,41 @@ export async function getPrestacionById(id: string) {
   const { data, error } = await supabase
     .from("prestaciones")
     .select(
-      "id, tipo_prestacion, obra_social_id, fecha, estado, monto, descripcion, notas, paciente_id, user_id, cronico"
+      "id, tipo_prestacion, obra_social_id, fecha, estado, monto, descripcion, notas, paciente_id, user_id, cronico, centro_id, sentido_transporte"
     )
     .eq("id", id)
     .single();
   return { data, error };
+}
+
+export async function listCentrosForSelect() {
+  const supabase = await createClient();
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, error } = await supabase
+      .from('centros')
+      .select('id, nombre, tipo')
+      .eq('activo', true)
+      .order('nombre', { ascending: true });
+
+    if (!error) {
+      return { data: (data || []) as { id: string; nombre: string; tipo: string }[], error: null };
+    }
+
+    lastError = error;
+    const msg = String((error as any)?.message || '');
+    const isFetchFailed = msg.toLowerCase().includes('fetch failed');
+    if (!isFetchFailed || attempt === 1) {
+      console.error('Error listando centros:', error);
+      return { data: [] as { id: string; nombre: string; tipo: string }[], error };
+    }
+
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  console.error('Error listando centros:', lastError);
+  return { data: [] as { id: string; nombre: string; tipo: string }[], error: lastError };
 }
 
 export async function updatePrestacionNota(id: string, notas: string | null) {
@@ -181,6 +215,8 @@ export async function createPrestacion(values: PrestacionInput) {
     estado: values.estado ?? "pendiente",
     cronico: values.cronico ?? false,
     user_id: values.user_id,
+    centro_id: values.centro_id ?? null,
+    sentido_transporte: values.sentido_transporte ?? null,
   };
   
   const { data, error } = await supabase
@@ -214,6 +250,8 @@ export async function createPrestacionesBulk(common: Omit<PrestacionInput, 'fech
     cronico: common.cronico ?? false,
     user_id: common.user_id,
     monto: common.monto == null ? null : Number(common.monto),
+    centro_id: (common as any).centro_id ?? null,
+    sentido_transporte: (common as any).sentido_transporte ?? null,
   }));
 
   const { data, error } = await supabase
@@ -247,6 +285,8 @@ export async function updatePrestacion(id: string, values: PrestacionInput) {
     ...values,
     cronico: values.cronico ?? false,
     user_id: values.user_id,
+    centro_id: values.centro_id ?? null,
+    sentido_transporte: values.sentido_transporte ?? null,
   };
   
   const { data, error } = await supabase

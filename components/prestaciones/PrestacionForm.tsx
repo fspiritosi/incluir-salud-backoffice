@@ -42,9 +42,11 @@ type PrestacionFormProps = {
   pacientes: PrestacionFormPaciente[];
   obrasSociales: { id: string; nombre: string }[];
   prestadores: { id: string; apellido: string; nombre: string; documento?: string }[];
+  centros?: { id: string; nombre: string; tipo?: string }[];
+  fixedTipoPrestacion?: string;
 };
 
-export function PrestacionForm({ initialData, isEditing = false, pacientes, obrasSociales, prestadores }: PrestacionFormProps) {
+export function PrestacionForm({ initialData, isEditing = false, pacientes, obrasSociales, prestadores, centros = [], fixedTipoPrestacion }: PrestacionFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
@@ -128,7 +130,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
   const form = useForm<PrestacionFormValues>({
     resolver: zodResolver(prestacionSchema),
     defaultValues: {
-      tipo_prestacion: initialData?.tipo_prestacion || '',
+      tipo_prestacion: (fixedTipoPrestacion ?? initialData?.tipo_prestacion) || '',
       obra_social_id: initialData?.obra_social_id || '',
       fecha: toLocalInputValue(initialData?.fecha),
       estado: initialData?.estado || 'pendiente',
@@ -138,11 +140,12 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
       notas: initialData?.notas || '',
       paciente_id: initialData?.paciente_id || '',
       user_id: initialData?.user_id || '',
+      centro_id: initialData?.centro_id || '',
     },
   });
 
   // Observa el tipo de prestación ya con 'form' inicializado
-  const tipoPrestacion = form.watch('tipo_prestacion');
+  const tipoPrestacion = fixedTipoPrestacion ?? form.watch('tipo_prestacion');
 
   // Trae prestadores por especialidad y limpia selección inválida
   useEffect(() => {
@@ -160,6 +163,13 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
         form.setValue('user_id', '');
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoPrestacion]);
+
+  useEffect(() => {
+    if (tipoPrestacion !== 'Transporte' && form.getValues('centro_id')) {
+      form.setValue('centro_id', '');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipoPrestacion]);
 
@@ -186,6 +196,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
           cronico: values.cronico ?? false,
           fecha: undefined as any,
           monto: values.monto == null ? null : Number(values.monto),
+          centro_id: (values as any).centro_id ? (values as any).centro_id : null,
         };
         const res = await fetch('/api/prestaciones', {
           method: 'POST',
@@ -208,6 +219,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
           cronico: values.cronico ?? false,
           fecha: values.fecha ? new Date(values.fecha).toISOString() : new Date().toISOString(),
           monto: values.monto == null ? null : Number(values.monto),
+          centro_id: (values as any).centro_id ? (values as any).centro_id : null,
         };
         let res: Response;
         if (isEditing && initialData?.id) {
@@ -312,7 +324,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
                   <Select
                     value={field.value || ''}
                     onValueChange={field.onChange}
-                    disabled={loading}
+                    disabled={loading || !!fixedTipoPrestacion || (isEditing && initialData?.tipo_prestacion === 'Transporte')}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Seleccionar tipo" />
@@ -320,6 +332,9 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
                     <SelectContent>
                       <SelectItem value="Acompañante Terapeutico">Acompañante Terapeutico</SelectItem>
                       <SelectItem value="Kinesiología">Kinesiología</SelectItem>
+                      {(isEditing && (field.value === 'Transporte' || initialData?.tipo_prestacion === 'Transporte' || fixedTipoPrestacion === 'Transporte')) ? (
+                        <SelectItem value="Transporte">Transporte</SelectItem>
+                      ) : null}
                     </SelectContent>
                   </Select>
                 </FormControl>
@@ -327,6 +342,37 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
               </FormItem>
             )}
           />
+
+          {tipoPrestacion === 'Transporte' && (
+            <FormField
+              control={form.control}
+              name="centro_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Centro *</FormLabel>
+                  <FormControl>
+                    <Select
+                      value={field.value || ''}
+                      onValueChange={field.onChange}
+                      disabled={loading}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder={centros.length ? 'Seleccionar centro' : 'No hay centros activos'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {centros.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.nombre}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
           <FormField
             control={form.control}
             name="user_id"

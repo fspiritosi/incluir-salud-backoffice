@@ -14,6 +14,11 @@ export const prestacionSchema = z.object({
   notas: z.string().optional(),
   paciente_id: z.string().uuid({ message: 'Paciente requerido' }),
   user_id: z.string().uuid({ message: 'Prestador requerido' }),
+  centro_id: z.string().uuid().optional().or(z.literal('')).transform(v => v || undefined),
+}).superRefine((val, ctx) => {
+  if (val.tipo_prestacion === 'Transporte' && !val.centro_id) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['centro_id'], message: 'Centro requerido para Transporte' });
+  }
 });
 
 export type PrestacionFormValues = z.input<typeof prestacionSchema>;
