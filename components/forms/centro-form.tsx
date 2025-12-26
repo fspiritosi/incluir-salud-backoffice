@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -85,7 +85,7 @@ export function CentroForm({ initialData, isEditing = false }: Props) {
     : undefined;
 
   const form = useForm<CentroFormValues>({
-    resolver: zodResolver(centroFormSchema),
+    resolver: zodResolver(centroFormSchema) as unknown as Resolver<CentroFormValues, any, CentroFormValues>,
     defaultValues: {
       nombre: "",
       tipo: "otro",
@@ -370,7 +370,7 @@ export function CentroForm({ initialData, isEditing = false }: Props) {
               <FormItem>
                 <FormLabel>Radio (metros) *</FormLabel>
                 <FormControl>
-                  <Input type="number" placeholder="50" {...field} disabled={loading} />
+                  <Input type="number" placeholder="50" {...field} onChange={(e) => field.onChange(Number(e.target.value))} disabled={loading} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
