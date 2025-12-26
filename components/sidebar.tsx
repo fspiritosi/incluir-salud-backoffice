@@ -27,6 +27,7 @@ export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
   const { roles } = useBackofficeRoles();
   const isSuperAdmin = roles.includes('super_admin');
+  const showUbicacionesSugeridas = roles.some((r) => ['auditor', 'super_admin'].includes(r));
   const showTransporte = canAccessTransporte(roles);
   const showCentros = canManageCentros(roles);
 
@@ -46,6 +47,15 @@ export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
       href: '/protected/prestaciones',
       icon: ClipboardList,
     },
+    ...(showUbicacionesSugeridas
+      ? [
+          {
+            name: 'Ubicaciones sugeridas',
+            href: '/protected/ubicaciones-sugeridas',
+            icon: MapPin,
+          },
+        ]
+      : []),
     ...(showTransporte
       ? [
           {
