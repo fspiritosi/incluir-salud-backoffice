@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { BACKOFFICE_ROLE_OPTIONS, type RoleName } from '@/utils/permissions';
 
 export default function RoleGuard({ children }: { children: React.ReactNode }) {
   const supabase = createClient();
@@ -19,12 +20,15 @@ export default function RoleGuard({ children }: { children: React.ReactNode }) {
 
       // Verificar si el usuario tiene AL MENOS UN rol
       const { data: roles, error: rolesError } = await supabase
-        .from('user_roles')
+        .from('v_user_roles')
         .select('role')
         .eq('user_id', user.id);
 
-      // Solo redirigir si no tiene NINGÚN rol
-      if (rolesError || !roles || roles.length === 0) {
+      const roleNames = (roles || []).map((r: any) => r.role as RoleName);
+      const hasBackofficeRole = roleNames.some((r) => BACKOFFICE_ROLE_OPTIONS.includes(r));
+
+      // Solo permitir roles del backoffice
+      if (rolesError || !hasBackofficeRole) {
         router.push('/acceso-denegado');
       }
     };
