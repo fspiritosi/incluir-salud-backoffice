@@ -2,8 +2,29 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 
-export async function listPrestadores() {
+function getAdminSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) return null;
+  return createAdminClient(url, serviceKey);
+}
+
+export type PrestadorRow = {
+  id: string;
+  nombre: string;
+  apellido: string;
+  documento: string | null;
+  email: string | null;
+  telefono: string | null;
+  activo: boolean | null;
+  created_at: string;
+  especialidad?: string | null;
+  avatar_url?: string | null;
+};
+
+export async function listPrestadores(): Promise<{ data: PrestadorRow[] | null; error: any }> {
   const supabase = await createClient();
   
   const { data, error } = await supabase
@@ -18,7 +39,34 @@ export async function listPrestadores() {
     return { data: null, error };
   }
 
-  return { data, error: null };
+  if (!data || data.length === 0) {
+    return { data: [], error: null };
+  }
+
+  // Enrich with avatar URLs from auth metadata
+  const admin = getAdminSupabase();
+  const avatarMap = new Map<string, string | null>();
+
+  if (admin) {
+    await Promise.all(
+      data.map(async (row) => {
+        try {
+          const { data: authData } = await admin.auth.admin.getUserById(row.id);
+          const avatarUrl = authData?.user?.user_metadata?.avatar_url ?? null;
+          avatarMap.set(row.id, avatarUrl);
+        } catch {
+          avatarMap.set(row.id, null);
+        }
+      })
+    );
+  }
+
+  const enriched: PrestadorRow[] = data.map((row) => ({
+    ...row,
+    avatar_url: avatarMap.get(row.id) ?? null,
+  }));
+
+  return { data: enriched, error: null };
 }
 
 type PrestacionPendienteDetalle = {
