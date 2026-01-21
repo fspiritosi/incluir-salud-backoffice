@@ -75,7 +75,6 @@ type ListBeneficiariosParams = {
   pageSize?: number;
   search?: string;
   ciudades?: string[];
-  provincias?: string[];
   activo?: "todos" | "si" | "no";
   ids?: string[];
 };
@@ -94,7 +93,7 @@ export async function listBeneficiarios(params: ListBeneficiariosParams = {}) {
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
 
-  const { search, ciudades, provincias, activo, ids } = params;
+  const { search, ciudades, activo, ids } = params;
 
   let query = supabase
     .from("pacientes")
@@ -113,10 +112,6 @@ export async function listBeneficiarios(params: ListBeneficiariosParams = {}) {
 
   if (ciudades && ciudades.length > 0) {
     query = query.in("ciudad", ciudades);
-  }
-
-  if (provincias && provincias.length > 0) {
-    query = query.in("provincia", provincias);
   }
 
   if (ids && ids.length > 0) {
@@ -512,4 +507,33 @@ export async function getCitiesByProvince(provinceId: number) {
     return { data: [] as City[], error };
   }
   return { data: (data || []) as City[], error: null };
+}
+
+/**
+ * Obtiene las ciudades únicas de la tabla pacientes usando DISTINCT.
+ * Esta función está diseñada para ser cacheada en page.tsx.
+ */
+export async function getDistinctCities(): Promise<string[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("pacientes")
+    .select("ciudad")
+    .not("ciudad", "is", null)
+    .order("ciudad", { ascending: true });
+
+  if (error) {
+    console.error("Error fetching distinct cities:", error);
+    return [];
+  }
+
+  // Extraer valores únicos
+  const uniqueCities = new Set<string>();
+  (data || []).forEach((row) => {
+    const ciudad = row.ciudad;
+    if (typeof ciudad === "string" && ciudad.trim()) {
+      uniqueCities.add(ciudad.trim());
+    }
+  });
+
+  return Array.from(uniqueCities).sort((a, b) => a.localeCompare(b));
 }

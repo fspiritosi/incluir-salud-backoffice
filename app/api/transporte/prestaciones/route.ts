@@ -3,6 +3,54 @@ import { createClient } from "@/lib/supabase/server";
 import { transportePrestacionRequestSchema } from "@/lib/validations/transporte-prestacion";
 import { canAccessTransporte, type RoleName } from "@/utils/permissions";
 
+// Helper para extraer solo la fecha (YYYY-MM-DD) de un ISO string
+function extractDateOnly(isoString: string): string {
+  return isoString.split('T')[0];
+}
+
+// Filtrar registros que ya existen en la base de datos
+async function filterExistingPrestaciones(
+  supabase: any,
+  records: Array<{
+    paciente_id?: string | null;
+    user_id: string;
+    tipo_prestacion: string;
+    fecha: string;
+    centro_id?: string | null;
+    sentido_transporte?: string | null;
+    [key: string]: any;
+  }>
+): Promise<{ newRecords: typeof records; duplicateCount: number }> {
+  if (records.length === 0) return { newRecords: [], duplicateCount: 0 };
+
+  const fechas = [...new Set(records.map(r => extractDateOnly(r.fecha)))];
+  const minFecha = `${fechas.sort()[0]}T00:00:00.000Z`;
+  const maxFecha = `${fechas.sort().reverse()[0]}T23:59:59.999Z`;
+
+  const { data: existing, error } = await supabase
+    .from("prestaciones")
+    .select("paciente_id, user_id, tipo_prestacion, fecha, centro_id, sentido_transporte")
+    .gte("fecha", minFecha)
+    .lte("fecha", maxFecha);
+
+  if (error || !existing) {
+    return { newRecords: records, duplicateCount: 0 };
+  }
+
+  const existingKeys = new Set(
+    existing.map((e: any) => 
+      `${e.paciente_id || 'null'}|${e.user_id}|${e.tipo_prestacion}|${extractDateOnly(e.fecha)}|${e.centro_id || 'null'}|${e.sentido_transporte || 'null'}`
+    )
+  );
+
+  const newRecords = records.filter(r => {
+    const key = `${r.paciente_id || 'null'}|${r.user_id}|${r.tipo_prestacion}|${extractDateOnly(r.fecha)}|${r.centro_id || 'null'}|${r.sentido_transporte || 'null'}`;
+    return !existingKeys.has(key);
+  });
+
+  return { newRecords, duplicateCount: records.length - newRecords.length };
+}
+
 export async function POST(req: Request) {
   try {
     const json = await req.json();
@@ -70,14 +118,24 @@ export async function POST(req: Request) {
       } as const;
 
       if (common.sentido === "ida_y_vuelta") {
-        const records = fechas.flatMap((fechaIda, idx) => {
+        const records = fechas.flatMap((fechaIda) => {
           return [
             { ...base, fecha: fechaIda, sentido_transporte: "ida" },
             { ...base, fecha: fechaIda, sentido_transporte: "vuelta" },
           ];
         });
 
-        const { data, error } = await supabase.from("prestaciones").insert(records).select("id");
+        // Filtrar duplicados
+        const { newRecords, duplicateCount } = await filterExistingPrestaciones(supabase, records);
+
+        if (newRecords.length === 0) {
+          return NextResponse.json(
+            { inserted: 0, duplicateCount, message: `Todas las ${duplicateCount} prestaciones ya existían` },
+            { status: 200 },
+          );
+        }
+
+        const { data, error } = await supabase.from("prestaciones").insert(newRecords).select("id");
         if (error) {
           return NextResponse.json(
             {
@@ -90,7 +148,7 @@ export async function POST(req: Request) {
         }
 
         return NextResponse.json(
-          { inserted: records.length, ids: (data || []).map((r: any) => r.id) },
+          { inserted: newRecords.length, duplicateCount, ids: (data || []).map((r: any) => r.id) },
           { status: 201 },
         );
       }
@@ -101,7 +159,17 @@ export async function POST(req: Request) {
         sentido_transporte: common.sentido,
       }));
 
-      const { data, error } = await supabase.from("prestaciones").insert(records).select("id");
+      // Filtrar duplicados
+      const { newRecords, duplicateCount } = await filterExistingPrestaciones(supabase, records);
+
+      if (newRecords.length === 0) {
+        return NextResponse.json(
+          { inserted: 0, duplicateCount, message: `Todas las ${duplicateCount} prestaciones ya existían` },
+          { status: 200 },
+        );
+      }
+
+      const { data, error } = await supabase.from("prestaciones").insert(newRecords).select("id");
       if (error) {
         return NextResponse.json(
           {
@@ -114,7 +182,7 @@ export async function POST(req: Request) {
       }
 
       return NextResponse.json(
-        { inserted: records.length, ids: (data || []).map((r: any) => r.id) },
+        { inserted: newRecords.length, duplicateCount, ids: (data || []).map((r: any) => r.id) },
         { status: 201 },
       );
     }
@@ -139,7 +207,17 @@ export async function POST(req: Request) {
         { ...base, fecha: fechaIda, sentido_transporte: "vuelta" },
       ];
 
-      const { data, error } = await supabase.from("prestaciones").insert(records).select("id");
+      // Filtrar duplicados
+      const { newRecords, duplicateCount } = await filterExistingPrestaciones(supabase, records);
+
+      if (newRecords.length === 0) {
+        return NextResponse.json(
+          { error: "Ya existen prestaciones con los mismos datos para esta fecha", duplicateCount },
+          { status: 400 },
+        );
+      }
+
+      const { data, error } = await supabase.from("prestaciones").insert(newRecords).select("id");
       if (error) {
         return NextResponse.json(
           {
@@ -150,7 +228,7 @@ export async function POST(req: Request) {
           { status: 400 },
         );
       }
-      return NextResponse.json({ ids: (data || []).map((r: any) => r.id) }, { status: 201 });
+      return NextResponse.json({ ids: (data || []).map((r: any) => r.id), duplicateCount }, { status: 201 });
     }
 
     const record = {
@@ -158,6 +236,16 @@ export async function POST(req: Request) {
       fecha: fechaIda,
       sentido_transporte: values.sentido,
     };
+
+    // Verificar duplicado para prestación individual
+    const { newRecords, duplicateCount } = await filterExistingPrestaciones(supabase, [record]);
+
+    if (newRecords.length === 0) {
+      return NextResponse.json(
+        { error: "Ya existe una prestación con los mismos datos para esta fecha" },
+        { status: 400 },
+      );
+    }
 
     const { data, error } = await supabase.from("prestaciones").insert([record]).select("id").single();
     if (error) {

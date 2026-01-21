@@ -17,6 +17,7 @@ export default function ProtectedLayout({
   children: React.ReactNode;
 }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const currentYear = new Date().getFullYear();
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -47,7 +48,7 @@ export default function ProtectedLayout({
       {/* Footer */}
       <footer className="w-full flex items-center justify-center border-t mx-auto text-center text-xs gap-8 py-16">
         <p>
-          <span className="font-bold">Incluir Salud Mendoza 2025</span>
+          <span className="font-bold">Incluir Salud Mendoza {currentYear}</span>
         </p>
       </footer>
     </div>
