@@ -58,19 +58,27 @@ export default async function BeneficiariosPage({ searchParams }: BeneficiariosP
     search: toSingle(resolvedSearchParams?.search) ?? "",
     ids: toArray(resolvedSearchParams?.ids),
     ciudades: toArray(resolvedSearchParams?.ciudades),
-    provincias: toArray(resolvedSearchParams?.provincias),
     activo: sanitizeActivo(toSingle(resolvedSearchParams?.activo)),
   };
 
-  const { data: pacientes, total, error } = await listBeneficiarios({
-    page,
-    pageSize,
-    search: filters.search,
-    ids: filters.ids,
-    ciudades: filters.ciudades,
-    provincias: filters.provincias,
-    activo: filters.activo,
-  });
+  // Ejecutar queries en paralelo para mejor performance
+  const [beneficiariosResult, citiesResult] = await Promise.all([
+    listBeneficiarios({
+      page,
+      pageSize,
+      search: filters.search,
+      ids: filters.ids,
+      ciudades: filters.ciudades,
+      activo: filters.activo,
+    }),
+    supabase
+      .from("pacientes")
+      .select("ciudad")
+      .not("ciudad", "is", null)
+      .order("ciudad", { ascending: true }),
+  ]);
+
+  const { data: pacientes, total, error } = beneficiariosResult;
 
   if (error) {
     return (
@@ -81,44 +89,13 @@ export default async function BeneficiariosPage({ searchParams }: BeneficiariosP
     );
   }
 
-  const fetchDistinctValues = async (column: "ciudad" | "provincia") => {
-    const CHUNK_SIZE = 1000; // Supabase limits range windows to ~1k rows per request
-    const values = new Set<string>();
-    let from = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from("pacientes")
-        .select(column)
-        .not(column, "is", null)
-        .order(column, { ascending: true })
-        .range(from, from + CHUNK_SIZE - 1);
-      if (error) {
-        console.error(`Error fetching ${column} list`, error);
-        break;
-      }
-      if (!data || data.length === 0) {
-        break;
-      }
-      const typedData = (data || []) as Array<{ ciudad?: string | null; provincia?: string | null }>;
-      typedData.forEach((row) => {
-        const raw = row[column];
-        if (typeof raw === "string") {
-          const trimmed = raw.trim();
-          if (trimmed) values.add(trimmed);
-        }
-      });
-      if (data.length < CHUNK_SIZE) {
-        break;
-      }
-      from += CHUNK_SIZE;
+  const uniqueCities = new Set<string>();
+  (citiesResult.data || []).forEach((row) => {
+    if (typeof row.ciudad === "string" && row.ciudad.trim()) {
+      uniqueCities.add(row.ciudad.trim());
     }
-    return Array.from(values).sort((a, b) => a.localeCompare(b));
-  };
-
-  const [allCities, allProvinces] = await Promise.all([
-    fetchDistinctValues("ciudad"),
-    fetchDistinctValues("provincia"),
-  ]);
+  });
+  const allCities = Array.from(uniqueCities).sort((a, b) => a.localeCompare(b));
 
   return (
     <div className="space-y-4">
@@ -154,7 +131,6 @@ export default async function BeneficiariosPage({ searchParams }: BeneficiariosP
         }}
         filters={filters}
         allCities={allCities}
-        allProvinces={allProvinces}
       />
     </div>
   );

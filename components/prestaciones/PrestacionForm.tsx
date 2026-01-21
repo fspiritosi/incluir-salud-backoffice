@@ -167,7 +167,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
   }, [tipoPrestacion]);
 
   useEffect(() => {
-    if (tipoPrestacion !== 'Transporte' && form.getValues('centro_id')) {
+    if (tipoPrestacion !== 'Transporte' && tipoPrestacion !== 'Acompañante Terapeutico' && form.getValues('centro_id')) {
       form.setValue('centro_id', '');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -343,7 +343,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
             )}
           />
 
-          {tipoPrestacion === 'Transporte' && (
+          {(tipoPrestacion === 'Transporte' || tipoPrestacion === 'Acompañante Terapeutico') && (
             <FormField
               control={form.control}
               name="centro_id"

@@ -7,6 +7,7 @@ import {
   useDeferredValue,
   useCallback,
   useRef,
+  useTransition,
   type FormEvent,
 } from "react";
 import Link from "next/link";
@@ -76,7 +77,6 @@ type BeneficiarioFilters = {
   search: string;
   ids: string[];
   ciudades: string[];
-  provincias: string[];
   activo: "todos" | "si" | "no";
 };
 
@@ -84,7 +84,6 @@ const EMPTY_FILTERS: BeneficiarioFilters = {
   search: "",
   ids: [],
   ciudades: [],
-  provincias: [],
   activo: "todos",
 };
 
@@ -93,7 +92,6 @@ interface BeneficiariosTableProps {
   pagination?: ServerPaginationInfo;
   filters?: BeneficiarioFilters;
   allCities?: string[];
-  allProvinces?: string[];
 }
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 250, 500];
@@ -153,7 +151,6 @@ export function BeneficiariosTable({
   pagination,
   filters,
   allCities = [],
-  allProvinces = [],
 }: BeneficiariosTableProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -162,6 +159,7 @@ export function BeneficiariosTable({
   const canEdit = canCreateOrEditPaciente(roles);
   const canToggle = canToggleBeneficiario(roles);
   const isServerPaginated = Boolean(pagination);
+  const [isPaginationPending, startPaginationTransition] = useTransition();
   const totalPages = pagination ? Math.max(1, Math.ceil(pagination.total / pagination.pageSize || 1)) : 1;
 
   const filtersSignature = useMemo(
@@ -170,7 +168,6 @@ export function BeneficiariosTable({
         filters?.search ?? "",
         normalizeStringArray(filters?.ids || []).join("|"),
         normalizeStringArray(filters?.ciudades || []).join("|"),
-        normalizeStringArray(filters?.provincias || []).join("|"),
         filters?.activo ?? "todos",
       ].join("::"),
     [filters]
@@ -182,7 +179,6 @@ export function BeneficiariosTable({
       ...(filters || {}),
       ids: normalizeStringArray(filters?.ids || []),
       ciudades: normalizeStringArray(filters?.ciudades || []),
-      provincias: normalizeStringArray(filters?.provincias || []),
     }),
     [filtersSignature]
   );
@@ -199,9 +195,7 @@ export function BeneficiariosTable({
   const [identidadSearch, setIdentidadSearch] = useState("");
   const [identidadSelected, setIdentidadSelected] = useState<string[]>(normalizedFilters.ids);
   const [ciudadSearch, setCiudadSearch] = useState("");
-  const [provinciaSearch, setProvinciaSearch] = useState("");
   const [ciudadSelected, setCiudadSelected] = useState<string[]>(normalizedFilters.ciudades);
-  const [provinciaSelected, setProvinciaSelected] = useState<string[]>(normalizedFilters.provincias);
   const [identityOptions, setIdentityOptions] = useState<IdentityOption[]>([]);
   const [identityPage, setIdentityPage] = useState(1);
   const [identityHasMore, setIdentityHasMore] = useState(false);
@@ -211,7 +205,6 @@ export function BeneficiariosTable({
 
   const deferredIdentidadSearch = useDeferredValue(identidadSearch.trim().toLowerCase());
   const deferredCiudadSearch = useDeferredValue(ciudadSearch.trim().toLowerCase());
-  const deferredProvinciaSearch = useDeferredValue(provinciaSearch.trim().toLowerCase());
   const deferredIdentityQuery = useDeferredValue(identidadSearch.trim());
   const identityAbortRef = useRef<AbortController | null>(null);
 
@@ -233,7 +226,6 @@ export function BeneficiariosTable({
       setOptionalParam("search", nextFilters.search);
       setArrayParam("ids", nextFilters.ids);
       setArrayParam("ciudades", nextFilters.ciudades);
-      setArrayParam("provincias", nextFilters.provincias);
       if (nextFilters.activo && nextFilters.activo !== "todos") {
         params.set("activo", nextFilters.activo);
       } else {
@@ -341,7 +333,6 @@ export function BeneficiariosTable({
     setSearchDraft(normalizedFilters.search);
     setIdentidadSelected(normalizedFilters.ids);
     setCiudadSelected(normalizedFilters.ciudades);
-    setProvinciaSelected(normalizedFilters.provincias);
     setFActivo(normalizedFilters.activo);
     setSelectedIdentityMap((prev) => {
       if (!normalizedFilters.ids.length) {
@@ -386,20 +377,7 @@ export function BeneficiariosTable({
     [applyFiltersToQueryParams, ciudadSelected, localFilters]
   );
 
-  const applyProvinceFilters = useCallback(
-    (provinces?: string[]) => {
-      const normalizedProvinces = normalizeStringArray(provinces ?? provinciaSelected);
-      if (arraysEqual(normalizedProvinces, localFilters.provincias)) return;
-      const nextFilters = {
-        ...localFilters,
-        provincias: normalizedProvinces,
-      };
-      setLocalFilters(nextFilters);
-      applyFiltersToQueryParams(nextFilters);
-    },
-    [applyFiltersToQueryParams, localFilters, provinciaSelected]
-  );
-
+  
   useEffect(() => {
     const missing = identidadSelected.filter((id) => !selectedIdentityMap.has(id));
     if (missing.length === 0) return;
@@ -443,10 +421,6 @@ export function BeneficiariosTable({
     const fallbackCities = data.map((row) => row.ciudad || "").filter(Boolean);
     return normalizeStringArray([...allCities, ...fallbackCities]);
   }, [allCities, data]);
-  const normalizedAllProvinces = useMemo(() => {
-    const fallbackProvinces = data.map((row) => row.provincia || "").filter(Boolean);
-    return normalizeStringArray([...allProvinces, ...fallbackProvinces]);
-  }, [allProvinces, data]);
 
   const identityLabelMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -478,15 +452,6 @@ export function BeneficiariosTable({
       normalizeForSearch(option).includes(normalizedQuery)
     );
   }, [normalizedAllCities, deferredCiudadSearch]);
-
-  const filteredProvinciaOptions = useMemo(() => {
-    if (!deferredProvinciaSearch) return normalizedAllProvinces;
-    const normalizedQuery = normalizeForSearch(deferredProvinciaSearch);
-    if (!normalizedQuery) return normalizedAllProvinces;
-    return normalizedAllProvinces.filter((option) =>
-      normalizeForSearch(option).includes(normalizedQuery)
-    );
-  }, [normalizedAllProvinces, deferredProvinciaSearch]);
 
   const tableData = useMemo(() => {
     if (isServerPaginated || !identidadSelected.length) return data;
@@ -564,18 +529,7 @@ export function BeneficiariosTable({
         return values.includes(value);
       },
     },
-    {
-      accessorKey: "provincia",
-      header: "Provincia",
-      enableColumnFilter: true,
-      filterFn: (row, columnId, filterValue) => {
-        const values = (filterValue as string[]) || [];
-        if (!Array.isArray(values) || values.length === 0) return true;
-        const value = (row.getValue(columnId) as string) || "";
-        return values.includes(value);
-      },
-    },
-    {
+        {
       accessorKey: "activo",
       header: "Activo",
       cell: ({ row }) => row.getValue("activo") ? "Sí" : "No",
@@ -696,7 +650,9 @@ export function BeneficiariosTable({
     }
     const query = current.toString();
     router.replace(query ? `${pathname}?${query}` : pathname);
-    router.refresh();
+    startPaginationTransition(() => {
+      router.refresh();
+    });
   };
 
   const goToPage = (target: number) => {
@@ -840,19 +796,6 @@ export function BeneficiariosTable({
             applyFilters: applyCityFilters,
             originalValues: localFilters.ciudades,
           },
-          {
-            key: "provincia",
-            label: "Provincias...",
-            options: filteredProvinciaOptions,
-            search: provinciaSearch,
-            setSearch: setProvinciaSearch,
-            total: normalizedAllProvinces.length,
-            isDeferredEmpty: !deferredProvinciaSearch,
-            selected: provinciaSelected,
-            setSelected: setProvinciaSelected,
-            applyFilters: applyProvinceFilters,
-            originalValues: localFilters.provincias,
-          },
         ].map(
           ({
             key,
@@ -956,7 +899,7 @@ export function BeneficiariosTable({
         </Select>
       </div>
 
-      <DataTable table={table} isLoading={loading} />
+      <DataTable table={table} isLoading={loading || isPaginationPending} />
       
       {isServerPaginated ? (
         <div className="flex flex-wrap items-center justify-between gap-3 px-2">

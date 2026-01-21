@@ -18,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Loader2 } from 'lucide-react';
 
 interface DataTableProps<TData> {
   table: Table<TData>;
@@ -29,7 +30,12 @@ export function DataTable<TData>({
   isLoading = false,
 }: DataTableProps<TData>) {
   return (
-    <div className="rounded-md border">
+    <div className="relative rounded-md border">
+      {isLoading && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      )}
       <ShadTable>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (

@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
-import { MapPin, Pencil, UserX, Check, X } from "lucide-react";
+import { MapPin, Pencil, UserX, Check, X, Users } from "lucide-react";
 
 type CentroTipo = "geriatrico" | "escuela" | "centro medico" | "otro";
 
@@ -110,6 +110,12 @@ export default function CentrosTable({ data }: { data: Centro[] }) {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
+                    <Link href={`/protected/centros/${c.id}/pacientes`}>
+                      <Button size="sm" variant="outline">
+                        <Users className="h-4 w-4 mr-2" />
+                        Pacientes
+                      </Button>
+                    </Link>
                     <Link href={`/protected/centros/editar/${c.id}`}>
                       <Button size="sm" variant="outline">
                         <Pencil className="h-4 w-4 mr-2" />

@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { LayoutDashboard, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight, UserCog, ShieldCheck, FileSearch, MapPin, Truck } from 'lucide-react';
+import { LayoutDashboard, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight, UserCog, ShieldCheck, FileSearch, MapPin, Truck, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ThemeSwitcher } from '@/components/theme-switcher';
 import { AuthButton } from '@/components/auth-button';
@@ -70,7 +70,7 @@ export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
           {
             name: 'Centros',
             href: '/protected/centros',
-            icon: MapPin,
+            icon: Building2,
           },
         ]
       : []),
