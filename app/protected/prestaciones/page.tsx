@@ -7,7 +7,18 @@ import { listPrestaciones, listPrestacionesParaReasignar, listPrestadoresByEspec
 import { PrestacionesTable, type PrestacionRow } from "@/components/prestaciones/PrestacionesTable";
 import PrestacionesReassignTable from "@/components/prestaciones/PrestacionesReassignTable";
 
-export default async function PrestacionesPage() {
+type PrestacionesPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+const toArray = (value: string | string[] | undefined) => {
+  if (!value) return [] as string[];
+  return Array.isArray(value) ? value.filter(Boolean) : [value];
+};
+
+const toSingle = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
+
+export default async function PrestacionesPage({ searchParams }: PrestacionesPageProps) {
   const supabase = await createClient();
   const { data: claims, error: claimsError } = await supabase.auth.getClaims();
   if (claimsError || !claims?.claims) {
@@ -26,8 +37,19 @@ export default async function PrestacionesPage() {
   }
   const canCreate = roles.some((r) => ["auditor", "super_admin"].includes(r));
 
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const filters = {
+    fechaDesde: toSingle(resolvedSearchParams?.fechaDesde) ?? "",
+    fechaHasta: toSingle(resolvedSearchParams?.fechaHasta) ?? "",
+    pacienteIds: toArray(resolvedSearchParams?.pacienteIds),
+  } as const;
+
   const [{ data, error }, { data: poolData, error: poolError }] = await Promise.all([
-    listPrestaciones(),
+    listPrestaciones({
+      fechaDesde: filters.fechaDesde,
+      fechaHasta: filters.fechaHasta,
+      pacienteIds: filters.pacienteIds,
+    }),
     listPrestacionesParaReasignar(),
   ]);
 
@@ -71,9 +93,14 @@ export default async function PrestacionesPage() {
           </p>
         </div>
         {canCreate ? (
-          <Link href="/protected/prestaciones/crear">
-            <Button>Nueva Prestación</Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link href="/protected/prestaciones/crear-por-centro">
+              <Button variant="outline">Crear por Centro</Button>
+            </Link>
+            <Link href="/protected/prestaciones/crear">
+              <Button>Nueva Prestación</Button>
+            </Link>
+          </div>
         ) : (
           <Button disabled title="No tenés permiso para crear prestaciones">Nueva Prestación</Button>
         )}
@@ -91,7 +118,7 @@ export default async function PrestacionesPage() {
         </TabsList>
 
         <TabsContent value="todas">
-          <PrestacionesTable data={(data || []) as PrestacionRow[]} />
+          <PrestacionesTable data={(data || []) as PrestacionRow[]} filters={filters} />
         </TabsContent>
 
         <TabsContent value="reasignar">

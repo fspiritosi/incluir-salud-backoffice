@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { LayoutDashboard, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight, UserCog, ShieldCheck, FileSearch } from 'lucide-react';
+import { LayoutDashboard, Users, Stethoscope, ClipboardList, FileText, ChevronLeft, ChevronRight, UserCog, ShieldCheck, FileSearch, MapPin, Truck, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ThemeSwitcher } from '@/components/theme-switcher';
 import { AuthButton } from '@/components/auth-button';
@@ -16,6 +16,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { useBackofficeRoles } from '@/hooks/useBackofficeRoles';
+import { canAccessTransporte, canManageCentros } from '@/utils/permissions';
 
 type SidebarProps = {
   isCollapsed: boolean;
@@ -26,6 +27,9 @@ export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
   const { roles } = useBackofficeRoles();
   const isSuperAdmin = roles.includes('super_admin');
+  const showUbicacionesSugeridas = roles.some((r) => ['auditor', 'super_admin'].includes(r));
+  const showTransporte = canAccessTransporte(roles);
+  const showCentros = canManageCentros(roles);
 
   const menuItems = [
     {
@@ -43,6 +47,33 @@ export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
       href: '/protected/prestaciones',
       icon: ClipboardList,
     },
+    ...(showUbicacionesSugeridas
+      ? [
+          {
+            name: 'Ubicaciones sugeridas',
+            href: '/protected/ubicaciones-sugeridas',
+            icon: MapPin,
+          },
+        ]
+      : []),
+    ...(showTransporte
+      ? [
+          {
+            name: 'Transporte',
+            href: '/protected/transporte',
+            icon: Truck,
+          },
+        ]
+      : []),
+    ...(showCentros
+      ? [
+          {
+            name: 'Centros',
+            href: '/protected/centros',
+            icon: Building2,
+          },
+        ]
+      : []),
     {
       name: 'Prestadores',
       href: '/protected/prestadores',

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { PrestacionForm } from "@/components/prestaciones/PrestacionForm";
-import { listObrasSocialesForSelect, listPacientesForSelect, listPrestadoresForSelect } from "@/app/protected/prestaciones/actions";
+import { listCentrosForSelect, listObrasSocialesForSelect, listPacientesForSelect, listPrestadoresForSelect } from "@/app/protected/prestaciones/actions";
 
 export default async function CrearPrestacionPage() {
   const supabase = await createClient();
@@ -12,10 +12,11 @@ export default async function CrearPrestacionPage() {
     redirect("/auth/login");
   }
 
-  const [{ data: pacientes }, { data: obrasSociales }, { data: prestadores }] = await Promise.all([
+  const [{ data: pacientes }, { data: obrasSociales }, { data: prestadores }, { data: centros }] = await Promise.all([
     listPacientesForSelect(),
     listObrasSocialesForSelect(),
     listPrestadoresForSelect(),
+    listCentrosForSelect(),
   ]);
 
   return (
@@ -25,7 +26,7 @@ export default async function CrearPrestacionPage() {
         Volver a la lista de prestaciones
       </Link>
       <h1 className="text-3xl font-bold tracking-tight mb-6">Nueva Prestación</h1>
-      <PrestacionForm pacientes={pacientes || []} obrasSociales={obrasSociales || []} prestadores={prestadores || []} />
+      <PrestacionForm pacientes={pacientes || []} obrasSociales={obrasSociales || []} prestadores={prestadores || []} centros={centros || []} />
     </div>
   );
 }

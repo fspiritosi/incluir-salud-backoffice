@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, X, MoreHorizontal, ChevronDown, Loader2 } from "lucide-react";
+import Image from "next/image";
+import { Check, X, MoreHorizontal, ChevronDown, Loader2, User } from "lucide-react";
 import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
 import { canTogglePrestador } from "@/utils/permissions";
 import {
@@ -42,6 +43,7 @@ type Prestador = {
   activo: boolean | null;
   created_at: string;
   especialidad?: string | null;
+  avatar_url?: string | null;
 };
 
 type DisablePreviewData = Awaited<ReturnType<typeof previewPrestadorDisable>>["data"];
@@ -132,6 +134,38 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
   }, [dialogPrestador, prestadores, targetEspecialidad]);
 
   const columns: ColumnDef<Prestador>[] = [
+    {
+      id: "avatar",
+      header: "",
+      cell: ({ row }) => {
+        const avatarUrl = row.original.avatar_url;
+        const initials = [
+          row.original.apellido?.[0] ?? "",
+          row.original.nombre?.[0] ?? "",
+        ]
+          .join("")
+          .toUpperCase();
+        return (
+          <div className="flex items-center justify-center">
+            {avatarUrl ? (
+              <Image
+                src={avatarUrl}
+                alt={`${row.original.apellido}, ${row.original.nombre}`}
+                width={32}
+                height={32}
+                className="rounded-full object-cover"
+              />
+            ) : (
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold">
+                {initials || <User className="h-4 w-4" />}
+              </div>
+            )}
+          </div>
+        );
+      },
+      enableSorting: false,
+      enableHiding: false,
+    },
     {
       accessorKey: "apellido",
       header: "Apellido",

@@ -15,6 +15,8 @@ export type PrestacionInput = {
   notas?: string | null;
   paciente_id?: string | null;
   user_id: string; // selected provider user id (FK -> auth.users.id)
+  centro_id?: string | null;
+  sentido_transporte?: 'ida' | 'vuelta' | 'ida_y_vuelta' | null;
 };
 
 function getAdminSupabase() {
@@ -22,6 +24,108 @@ function getAdminSupabase() {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) return null as any;
   return createAdminClient(url, serviceKey);
+}
+
+// Helper para extraer solo la fecha (YYYY-MM-DD) de un ISO string
+function extractDateOnly(isoString: string): string {
+  return isoString.split('T')[0];
+}
+
+// Verificar si ya existe una prestación con los mismos datos clave
+async function checkDuplicatePrestacion(
+  supabase: any,
+  params: {
+    paciente_id?: string | null;
+    user_id: string;
+    tipo_prestacion: string;
+    fecha: string;
+    centro_id?: string | null;
+    sentido_transporte?: string | null;
+  }
+): Promise<{ exists: boolean; error?: any }> {
+  const fechaDate = extractDateOnly(params.fecha);
+  
+  let query = supabase
+    .from("prestaciones")
+    .select("id")
+    .eq("tipo_prestacion", params.tipo_prestacion)
+    .eq("user_id", params.user_id)
+    .gte("fecha", `${fechaDate}T00:00:00.000Z`)
+    .lt("fecha", `${fechaDate}T23:59:59.999Z`);
+
+  if (params.paciente_id) {
+    query = query.eq("paciente_id", params.paciente_id);
+  } else {
+    query = query.is("paciente_id", null);
+  }
+
+  if (params.centro_id) {
+    query = query.eq("centro_id", params.centro_id);
+  } else {
+    query = query.is("centro_id", null);
+  }
+
+  if (params.sentido_transporte) {
+    query = query.eq("sentido_transporte", params.sentido_transporte);
+  } else {
+    query = query.is("sentido_transporte", null);
+  }
+
+  const { data, error } = await query.limit(1);
+
+  if (error) {
+    return { exists: false, error };
+  }
+
+  return { exists: (data?.length || 0) > 0 };
+}
+
+// Filtrar registros que ya existen en la base de datos
+async function filterExistingPrestaciones(
+  supabase: any,
+  records: Array<{
+    paciente_id?: string | null;
+    user_id: string;
+    tipo_prestacion: string;
+    fecha: string;
+    centro_id?: string | null;
+    sentido_transporte?: string | null;
+    [key: string]: any;
+  }>
+): Promise<{ newRecords: typeof records; duplicateCount: number }> {
+  if (records.length === 0) return { newRecords: [], duplicateCount: 0 };
+
+  // Obtener todas las fechas únicas para buscar
+  const fechas = [...new Set(records.map(r => extractDateOnly(r.fecha)))];
+  const minFecha = `${fechas.sort()[0]}T00:00:00.000Z`;
+  const maxFecha = `${fechas.sort().reverse()[0]}T23:59:59.999Z`;
+
+  // Buscar prestaciones existentes en el rango de fechas
+  const { data: existing, error } = await supabase
+    .from("prestaciones")
+    .select("paciente_id, user_id, tipo_prestacion, fecha, centro_id, sentido_transporte")
+    .gte("fecha", minFecha)
+    .lte("fecha", maxFecha);
+
+  if (error || !existing) {
+    // Si hay error, intentar insertar todos (la DB rechazará duplicados si hay constraint)
+    return { newRecords: records, duplicateCount: 0 };
+  }
+
+  // Crear un Set de claves únicas de prestaciones existentes
+  const existingKeys = new Set(
+    existing.map((e: any) => 
+      `${e.paciente_id || 'null'}|${e.user_id}|${e.tipo_prestacion}|${extractDateOnly(e.fecha)}|${e.centro_id || 'null'}|${e.sentido_transporte || 'null'}`
+    )
+  );
+
+  // Filtrar registros que no existen
+  const newRecords = records.filter(r => {
+    const key = `${r.paciente_id || 'null'}|${r.user_id}|${r.tipo_prestacion}|${extractDateOnly(r.fecha)}|${r.centro_id || 'null'}|${r.sentido_transporte || 'null'}`;
+    return !existingKeys.has(key);
+  });
+
+  return { newRecords, duplicateCount: records.length - newRecords.length };
 }
 
 // Filtrar prestadores por especialidad que debe coincidir con el tipo de prestación seleccionado
@@ -69,17 +173,70 @@ export async function listPrestadoresForSelect() {
   };
 }
 
-export async function listPrestaciones() {
+type ListPrestacionesParams = {
+  fechaDesde?: string;
+  fechaHasta?: string;
+  pacienteIds?: string[];
+};
+
+const parseDateInput = (value?: string) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const startOfDayIso = (date: Date) => {
+  const clone = new Date(date);
+  clone.setUTCHours(0, 0, 0, 0);
+  return clone.toISOString();
+};
+
+const endOfDayIso = (date: Date) => {
+  const clone = new Date(date);
+  clone.setUTCHours(23, 59, 59, 999);
+  return clone.toISOString();
+};
+
+const normalizeStringArray = (values: string[] = []) =>
+  Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+export async function listPrestaciones(params: ListPrestacionesParams = {}) {
   const supabase = await createClient();
 
-  // Primero obtenemos las prestaciones base
-  const { data: prestaciones, error } = await supabase
+  const filters = {
+    fechaDesde: params.fechaDesde?.trim() ?? "",
+    fechaHasta: params.fechaHasta?.trim() ?? "",
+    pacienteIds: normalizeStringArray(params.pacienteIds),
+  };
+
+  let query = supabase
     .from("prestaciones")
-    .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico")
+    .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico, sentido_transporte")
+    .neq("tipo_prestacion", "Transporte")
     .order("fecha", { ascending: false });
 
+  if (filters.fechaDesde) {
+    const parsed = parseDateInput(filters.fechaDesde);
+    if (parsed) {
+      query = query.gte("fecha", startOfDayIso(parsed));
+    }
+  }
+
+  if (filters.fechaHasta) {
+    const parsed = parseDateInput(filters.fechaHasta);
+    if (parsed) {
+      query = query.lte("fecha", endOfDayIso(parsed));
+    }
+  }
+
+  if (filters.pacienteIds.length > 0) {
+    query = query.in("paciente_id", filters.pacienteIds);
+  }
+
+  const { data: prestaciones, error } = await query;
+
   if (error) {
-    console.error('Error listando prestaciones:', error);
+    console.error("Error listando prestaciones:", error);
     return { data: null as any, error };
   }
 
@@ -87,28 +244,23 @@ export async function listPrestaciones() {
     return { data: [], error: null };
   }
 
-  // Obtener IDs únicos de pacientes y prestadores
-  const pacienteIds = Array.from(new Set(prestaciones.map(p => p.paciente_id).filter(Boolean)));
-  const prestadorIds = Array.from(new Set(prestaciones.map(p => p.user_id).filter(Boolean)));
+  const pacienteIds = Array.from(new Set(prestaciones.map((p) => p.paciente_id).filter(Boolean)));
+  const prestadorIds = Array.from(new Set(prestaciones.map((p) => p.user_id).filter(Boolean)));
 
-  // Obtener datos de pacientes
   const { data: pacientes } = await supabase
     .from("pacientes")
     .select("id, nombre, apellido, documento")
     .in("id", pacienteIds);
 
-  // Obtener datos de prestadores desde profiles
   const { data: prestadores } = await supabase
     .from("profiles")
     .select("id, nombre, apellido, documento")
     .in("id", prestadorIds);
 
-  // Crear maps para búsqueda rápida
-  const pacientesMap = new Map((pacientes || []).map(p => [p.id, p]));
-  const prestadoresMap = new Map((prestadores || []).map(p => [p.id, p]));
+  const pacientesMap = new Map((pacientes || []).map((p) => [p.id, p]));
+  const prestadoresMap = new Map((prestadores || []).map((p) => [p.id, p]));
 
-  // Combinar los datos
-  const data = prestaciones.map(p => ({
+  const data = prestaciones.map((p) => ({
     id: p.id,
     tipo_prestacion: p.tipo_prestacion,
     fecha: p.fecha,
@@ -116,22 +268,24 @@ export async function listPrestaciones() {
     monto: p.monto,
     user_id: p.user_id,
     cronico: p.cronico,
+    sentido_transporte: (p as any).sentido_transporte ?? null,
     paciente: p.paciente_id ? pacientesMap.get(p.paciente_id) || null : null,
     prestador: p.user_id ? prestadoresMap.get(p.user_id) || null : null,
   }));
 
-  return { 
+  return {
     data: data as Array<{
       id: string;
       tipo_prestacion: string;
       fecha: string;
       estado: string | null;
       monto: number | null;
+      sentido_transporte?: string | null;
       user_id?: string | null;
       paciente: { id: string; nombre: string; apellido: string; documento: string } | null;
       prestador: { id: string; nombre: string; apellido: string; documento?: string } | null;
-    }> | null, 
-    error: null 
+    }> | null,
+    error: null,
   };
 }
 
@@ -140,11 +294,41 @@ export async function getPrestacionById(id: string) {
   const { data, error } = await supabase
     .from("prestaciones")
     .select(
-      "id, tipo_prestacion, obra_social_id, fecha, estado, monto, descripcion, notas, paciente_id, user_id, cronico"
+      "id, tipo_prestacion, obra_social_id, fecha, estado, monto, descripcion, notas, paciente_id, user_id, cronico, centro_id, sentido_transporte"
     )
     .eq("id", id)
     .single();
   return { data, error };
+}
+
+export async function listCentrosForSelect() {
+  const supabase = await createClient();
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, error } = await supabase
+      .from('centros')
+      .select('id, nombre, tipo')
+      .eq('activo', true)
+      .order('nombre', { ascending: true });
+
+    if (!error) {
+      return { data: (data || []) as { id: string; nombre: string; tipo: string }[], error: null };
+    }
+
+    lastError = error;
+    const msg = String((error as any)?.message || '');
+    const isFetchFailed = msg.toLowerCase().includes('fetch failed');
+    if (!isFetchFailed || attempt === 1) {
+      console.error('Error listando centros:', error);
+      return { data: [] as { id: string; nombre: string; tipo: string }[], error };
+    }
+
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  console.error('Error listando centros:', lastError);
+  return { data: [] as { id: string; nombre: string; tipo: string }[], error: lastError };
 }
 
 export async function updatePrestacionNota(id: string, notas: string | null) {
@@ -161,19 +345,25 @@ export async function updatePrestacionNota(id: string, notas: string | null) {
 export async function createPrestacion(values: PrestacionInput) {
   const supabase = await createClient();
   
-  // Obtener datos del prestador desde profiles
-  let fullName: string | null = null;
-  let dni: string | null = null;
-  
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("nombre, apellido, documento")
-    .eq("id", values.user_id)
-    .single();
-  
-  if (profile) {
-    fullName = [profile.apellido, profile.nombre].filter(Boolean).join(', ') || null;
-    dni = profile.documento || null;
+  // Verificar duplicados antes de insertar
+  const { exists, error: dupError } = await checkDuplicatePrestacion(supabase, {
+    paciente_id: values.paciente_id,
+    user_id: values.user_id,
+    tipo_prestacion: values.tipo_prestacion,
+    fecha: values.fecha,
+    centro_id: values.centro_id,
+    sentido_transporte: values.sentido_transporte,
+  });
+
+  if (dupError) {
+    console.error("Error verificando duplicados:", dupError);
+  }
+
+  if (exists) {
+    return { 
+      data: null, 
+      error: { message: "Ya existe una prestación con los mismos datos para esta fecha" } 
+    };
   }
 
   const payload: any = {
@@ -181,6 +371,8 @@ export async function createPrestacion(values: PrestacionInput) {
     estado: values.estado ?? "pendiente",
     cronico: values.cronico ?? false,
     user_id: values.user_id,
+    centro_id: values.centro_id ?? null,
+    sentido_transporte: values.sentido_transporte ?? null,
   };
   
   const { data, error } = await supabase
@@ -194,7 +386,7 @@ export async function createPrestacion(values: PrestacionInput) {
 export async function createPrestacionesBulk(common: Omit<PrestacionInput, 'fecha'>, fechas: string[]) {
   const supabase = await createClient();
   if (!Array.isArray(fechas) || fechas.length === 0) {
-    return { data: null, error: { message: 'No hay fechas para insertar' } } as const;
+    return { data: null, error: { message: 'No hay fechas para insertar' }, duplicateCount: 0 } as const;
   }
   // Normalizar y limitar a 60
   const sanitized = fechas
@@ -204,7 +396,7 @@ export async function createPrestacionesBulk(common: Omit<PrestacionInput, 'fech
     .filter((f): f is string => !!f)
     .slice(0, 60);
   if (sanitized.length === 0) {
-    return { data: null, error: { message: 'Fechas inválidas' } } as const;
+    return { data: null, error: { message: 'Fechas inválidas' }, duplicateCount: 0 } as const;
   }
 
   const records = sanitized.map((f) => ({
@@ -213,16 +405,32 @@ export async function createPrestacionesBulk(common: Omit<PrestacionInput, 'fech
     estado: common.estado ?? 'pendiente',
     cronico: common.cronico ?? false,
     user_id: common.user_id,
+    paciente_id: common.paciente_id ?? null,
+    tipo_prestacion: common.tipo_prestacion,
     monto: common.monto == null ? null : Number(common.monto),
+    centro_id: (common as any).centro_id ?? null,
+    sentido_transporte: (common as any).sentido_transporte ?? null,
   }));
+
+  // Filtrar duplicados
+  const { newRecords, duplicateCount } = await filterExistingPrestaciones(supabase, records);
+
+  if (newRecords.length === 0) {
+    return { 
+      data: [], 
+      error: null, 
+      duplicateCount,
+      message: `Todas las ${duplicateCount} prestaciones ya existían` 
+    } as const;
+  }
 
   const { data, error } = await supabase
     .from('prestaciones')
-    .insert(records)
+    .insert(newRecords)
     .select('id');
 
-  if (error) return { data: null, error } as const;
-  return { data, error: null } as const;
+  if (error) return { data: null, error, duplicateCount } as const;
+  return { data, error: null, duplicateCount } as const;
 }
 
 export async function updatePrestacion(id: string, values: PrestacionInput) {
@@ -247,6 +455,8 @@ export async function updatePrestacion(id: string, values: PrestacionInput) {
     ...values,
     cronico: values.cronico ?? false,
     user_id: values.user_id,
+    centro_id: values.centro_id ?? null,
+    sentido_transporte: values.sentido_transporte ?? null,
   };
   
   const { data, error } = await supabase
@@ -276,7 +486,11 @@ export type PrestacionParaReasignar = {
   metadata: Record<string, any> | null;
 };
 
-export async function listPrestacionesParaReasignar() {
+type ListPrestacionesParaReasignarOptions = {
+  tipoPrestacion?: string;
+};
+
+export async function listPrestacionesParaReasignar(options: ListPrestacionesParaReasignarOptions = {}) {
   const supabase = await createClient();
 
   const { data: poolRows, error } = await supabase
@@ -347,6 +561,10 @@ export async function listPrestacionesParaReasignar() {
 
     if (shouldAutoProcess) {
       autoProcessedIds.push(row.id);
+      return;
+    }
+
+    if (options.tipoPrestacion && prestacion?.tipo_prestacion !== options.tipoPrestacion) {
       return;
     }
 
@@ -472,6 +690,7 @@ export async function reasignarPrestacionDesdePool(poolId: string, nuevoPrestado
   }
 
   revalidatePath('/protected/prestaciones');
+  revalidatePath('/protected/transporte');
 
   return { data: updatedPrestacion, error: null } as const;
 }
@@ -589,4 +808,126 @@ export async function cancelPrestacionAction(formData: FormData): Promise<void> 
   const id = String(formData.get('id') || '');
   if (!id) return;
   await cancelPrestacion(id);
+}
+
+// Obtener pacientes de un centro para crear prestaciones masivas
+export async function getPacientesDeCentro(centroId: string) {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("paciente_centros")
+    .select(`
+      paciente_id,
+      pacientes (
+        id,
+        nombre,
+        apellido,
+        documento
+      )
+    `)
+    .eq("centro_id", centroId)
+    .eq("activo", true);
+
+  if (error) {
+    console.error("Error obteniendo pacientes del centro:", error);
+    return { data: null, error };
+  }
+
+  const pacientes = (data || []).map((row: any) => ({
+    id: row.pacientes?.id || row.paciente_id,
+    nombre: row.pacientes?.nombre || "",
+    apellido: row.pacientes?.apellido || "",
+    documento: row.pacientes?.documento || "",
+  }));
+
+  return { data: pacientes, error: null };
+}
+
+// Crear prestaciones para todos los pacientes de un centro
+export async function createPrestacionesPorCentro(params: {
+  centro_id: string;
+  user_id: string;
+  tipo_prestacion: string;
+  fechas: string[];
+  monto?: number | null;
+  descripcion?: string | null;
+  notas?: string | null;
+  cronico?: boolean;
+}) {
+  const supabase = await createClient();
+
+  // Obtener pacientes del centro
+  const { data: pacientes, error: errorPacientes } = await getPacientesDeCentro(params.centro_id);
+
+  if (errorPacientes || !pacientes || pacientes.length === 0) {
+    return { 
+      data: null, 
+      error: { message: errorPacientes?.message || "No hay pacientes asignados a este centro" } 
+    };
+  }
+
+  // Validar fechas
+  const fechasValidas = params.fechas
+    .map(f => { try { return new Date(f).toISOString(); } catch { return null; } })
+    .filter((f): f is string => !!f);
+
+  if (fechasValidas.length === 0) {
+    return { data: null, error: { message: "No hay fechas válidas" } };
+  }
+
+  // Crear una prestación por cada paciente por cada fecha
+  const records: any[] = [];
+  for (const paciente of pacientes) {
+    for (const fecha of fechasValidas) {
+      records.push({
+        user_id: params.user_id,
+        paciente_id: paciente.id,
+        centro_id: params.centro_id,
+        tipo_prestacion: params.tipo_prestacion,
+        fecha,
+        estado: "pendiente",
+        monto: params.monto ?? null,
+        descripcion: params.descripcion ?? null,
+        notas: params.notas ?? null,
+        cronico: params.cronico ?? false,
+        sentido_transporte: null,
+      });
+    }
+  }
+
+  // Limitar a 500 registros por seguridad
+  const recordsLimited = records.slice(0, 500);
+
+  // Filtrar duplicados
+  const { newRecords, duplicateCount } = await filterExistingPrestaciones(supabase, recordsLimited);
+
+  if (newRecords.length === 0) {
+    return { 
+      data: { created: 0, pacientes: pacientes.length, fechas: fechasValidas.length, duplicateCount },
+      error: null,
+      message: `Todas las ${duplicateCount} prestaciones ya existían`
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("prestaciones")
+    .insert(newRecords)
+    .select("id");
+
+  if (error) {
+    console.error("Error creando prestaciones por centro:", error);
+    return { data: null, error };
+  }
+
+  revalidatePath("/protected/prestaciones");
+
+  return { 
+    data: { 
+      created: data?.length || 0, 
+      pacientes: pacientes.length,
+      fechas: fechasValidas.length,
+      duplicateCount 
+    }, 
+    error: null 
+  };
 }

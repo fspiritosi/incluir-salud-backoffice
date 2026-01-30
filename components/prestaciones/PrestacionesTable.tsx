@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useTransition, useEffect, useMemo } from "react";
+import { useState, useTransition, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { 
   ColumnDef,
   ColumnFiltersState,
@@ -17,7 +17,7 @@ import {
 } from "@tanstack/react-table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Pencil, MoreHorizontalIcon, XCircle, ChevronDown } from "lucide-react";
+import { Pencil, MoreHorizontalIcon, XCircle, ChevronDown, Loader2 } from "lucide-react";
 import { DataTable } from "@/components/ui/data-table";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
@@ -36,6 +36,13 @@ import { useToast } from "@/components/ui/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Input as SearchInput } from "@/components/ui/input";
+
+type PrestacionesFilters = {
+  fechaDesde: string;
+  fechaHasta: string;
+  pacienteIds: string[];
+};
 
 type CheckedState = boolean | 'indeterminate';
 
@@ -46,6 +53,7 @@ export type PrestacionRow = {
   estado: string | null;
   monto: number | null;
   cronico?: boolean | null;
+  sentido_transporte?: string | null;
   user_id?: string | null;
   prestador?: {
     id: string;
@@ -61,18 +69,30 @@ export type PrestacionRow = {
   } | null;
 };
 
-export const PrestacionesTable = ({ data }: { data: PrestacionRow[] }) => {
+type PrestacionesTableProps = {
+  data: PrestacionRow[];
+  filters?: PrestacionesFilters;
+};
+
+const normalizeStringArray = (values: string[] = []) =>
+  Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
   const { roles, loading } = useBackofficeRoles();
   const canWritePrestaciones = canCreateOrEditPrestacion(roles);
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
-  
+
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
-  const [fechaInicio, setFechaInicio] = useState<string>("");
-  const [fechaFin, setFechaFin] = useState<string>("");
+  const [fechaDesde, setFechaDesde] = useState<string>(filters?.fechaDesde ?? "");
+  const [fechaHasta, setFechaHasta] = useState<string>(filters?.fechaHasta ?? "");
+  const [pacienteSelected, setPacienteSelected] = useState<string[]>(normalizeStringArray(filters?.pacienteIds));
+  const [pacienteSearch, setPacienteSearch] = useState("");
 
   const [rowSelection, setRowSelection] = useState({});
   const [massEditOpen, setMassEditOpen] = useState(false);
@@ -641,11 +661,88 @@ export const PrestacionesTable = ({ data }: { data: PrestacionRow[] }) => {
     });
   };
 
+  const applyFiltersToQueryParams = useCallback(
+    (next: { fechaDesde?: string; fechaHasta?: string; pacienteIds?: string[] }) => {
+      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      const setArrayParam = (key: string, values: string[] = []) => {
+        params.delete(key);
+        values.forEach((value) => params.append(key, value));
+      };
+
+      const setOptional = (key: string, value?: string) => {
+        if (value?.trim()) params.set(key, value.trim());
+        else params.delete(key);
+      };
+
+      setOptional("fechaDesde", next.fechaDesde ?? "");
+      setOptional("fechaHasta", next.fechaHasta ?? "");
+      setArrayParam("pacienteIds", normalizeStringArray(next.pacienteIds));
+
+      const query = params.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname);
+      router.refresh();
+    },
+    [pathname, router, searchParams]
+  );
+
+  useEffect(() => {
+    setFechaDesde(filters?.fechaDesde ?? "");
+    setFechaHasta(filters?.fechaHasta ?? "");
+    setPacienteSelected(normalizeStringArray(filters?.pacienteIds));
+  }, [filters?.fechaDesde, filters?.fechaHasta, filters?.pacienteIds]);
+
+  const applyDateFilters = () => {
+    if (
+      (fechaDesde || "") === (filters?.fechaDesde || "") &&
+      (fechaHasta || "") === (filters?.fechaHasta || "")
+    ) {
+      return;
+    }
+    applyFiltersToQueryParams({
+      fechaDesde,
+      fechaHasta,
+      pacienteIds: pacienteSelected,
+    });
+  };
+
+  const clearDateFilters = () => {
+    if (!(filters?.fechaDesde || filters?.fechaHasta)) return;
+    setFechaDesde("");
+    setFechaHasta("");
+    applyFiltersToQueryParams({
+      fechaDesde: "",
+      fechaHasta: "",
+      pacienteIds: pacienteSelected,
+    });
+  };
+
+  const applyPacienteFilters = () => {
+    if (arraysEqual(normalizeStringArray(pacienteSelected), normalizeStringArray(filters?.pacienteIds))) return;
+    applyFiltersToQueryParams({
+      fechaDesde,
+      fechaHasta,
+      pacienteIds: pacienteSelected,
+    });
+  };
+
+  const clearPacienteFilters = () => {
+    if (!filters?.pacienteIds?.length) return;
+    setPacienteSelected([]);
+    applyFiltersToQueryParams({
+      fechaDesde,
+      fechaHasta,
+      pacienteIds: [],
+    });
+  };
+
+  const arraysEqual = (a: string[] = [], b: string[] = []) =>
+    a.length === b.length && a.every((value, index) => value === b[index]);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">Prestaciones</h2>
-        
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="ml-auto">
@@ -672,190 +769,105 @@ export const PrestacionesTable = ({ data }: { data: PrestacionRow[] }) => {
         </DropdownMenu>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <form
+        className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          applyDateFilters();
+        }}
+      >
         <div className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">Inicio (desde)</span>
-          <Input
-            type="date"
-            className="w-[150px]"
-            value={fechaInicio}
-            onChange={(event) => {
-              const value = event.target.value;
-              setFechaInicio(value);
-              table.getColumn("fecha")?.setFilterValue([value, fechaFin]);
-            }}
-            placeholder="Desde"
-            aria-label="Fecha de inicio"
-          />
+          <span className="text-xs text-muted-foreground">Fecha desde</span>
+          <Input type="date" value={fechaDesde} onChange={(event) => setFechaDesde(event.target.value)} />
         </div>
         <div className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">Fin (hasta)</span>
-          <Input
-            type="date"
-            className="w-[150px]"
-            value={fechaFin}
-            onChange={(event) => {
-              const value = event.target.value;
-              setFechaFin(value);
-              table.getColumn("fecha")?.setFilterValue([fechaInicio, value]);
-            }}
-            placeholder="Hasta"
-            aria-label="Fecha de fin"
-          />
+          <span className="text-xs text-muted-foreground">Fecha hasta</span>
+          <Input type="date" value={fechaHasta} onChange={(event) => setFechaHasta(event.target.value)} />
         </div>
-      </div>
+        <div className="flex items-end gap-2">
+          <Button
+            type="submit"
+            disabled={
+              (fechaDesde || "") === (filters?.fechaDesde || "") &&
+              (fechaHasta || "") === (filters?.fechaHasta || "")
+            }
+          >
+            Aplicar fechas
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={clearDateFilters}
+            disabled={!(filters?.fechaDesde || filters?.fechaHasta)}
+          >
+            Limpiar
+          </Button>
+        </div>
+      </form>
 
-      <div className="flex items-center gap-2 overflow-x-auto py-2">
+      <div className="flex flex-wrap items-center gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="w-[180px] justify-between">
+            <Button variant="outline" className="w-[220px] justify-between">
               <span className="truncate text-left">
                 {(() => {
-                  const selected = (table.getColumn("dia_semana")?.getFilterValue() as string[]) || [];
-                  if (!selected?.length) return "Días...";
-                  if (selected.length === 1) return selected[0];
-                  return `${selected.length} seleccionados`;
-                })()}
-              </span>
-              <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-64 p-2">
-            <Input
-              placeholder="Buscar día"
-              value={diaFilterSearch}
-              onChange={(e) => setDiaFilterSearch(e.target.value)}
-              className="mb-2"
-            />
-            <div className="max-h-[320px] overflow-y-auto space-y-2">
-              {diasSemanaOptions
-                .filter(option => option.toLowerCase().includes(diaFilterSearch.toLowerCase().trim()))
-                .map(option => {
-                  const selected = (table.getColumn("dia_semana")?.getFilterValue() as string[]) || [];
-                  const isChecked = selected.includes(option);
-                  return (
-                    <label key={option} className="flex items-center gap-2 text-sm">
-                      <Checkbox
-                        checked={isChecked}
-                        onCheckedChange={() => {
-                          const column = table.getColumn("dia_semana");
-                          if (!column) return;
-                          const current = (column.getFilterValue() as string[]) || [];
-                          const next = isChecked
-                            ? current.filter((value) => value !== option)
-                            : [...current, option];
-                          column.setFilterValue(next.length ? next : undefined);
-                        }}
-                      />
-                      <span className="truncate">{option}</span>
-                    </label>
-                  );
-                })}
-              {diasSemanaOptions.filter(option => option.toLowerCase().includes(diaFilterSearch.toLowerCase().trim())).length === 0 && (
-                <p className="text-sm text-muted-foreground">Sin resultados</p>
-              )}
-            </div>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="w-[180px] justify-between">
-              <span className="truncate text-left">
-                {(() => {
-                  const selected = (table.getColumn("tipo_prestacion")?.getFilterValue() as string[]) || [];
-                  if (!selected?.length) return "Tipos...";
-                  if (selected.length === 1) return selected[0];
-                  return `${selected.length} seleccionados`;
-                })()}
-              </span>
-              <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-64 p-2">
-            <Input
-              placeholder="Buscar tipo"
-              value={tipoFilterSearch}
-              onChange={(e) => setTipoFilterSearch(e.target.value)}
-              className="mb-2"
-            />
-            <div className="max-h-[320px] overflow-y-auto space-y-2">
-              {tipoOptions.filter(option => option.toLowerCase().includes(tipoFilterSearch.toLowerCase().trim())).map(option => {
-                const selected = (table.getColumn("tipo_prestacion")?.getFilterValue() as string[]) || [];
-                const isChecked = selected.includes(option);
-                return (
-                  <label key={option} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={isChecked}
-                      onCheckedChange={() => {
-                        const column = table.getColumn("tipo_prestacion");
-                        if (!column) return;
-                        const current = (column.getFilterValue() as string[]) || [];
-                        const next = isChecked
-                          ? current.filter((value) => value !== option)
-                          : [...current, option];
-                        column.setFilterValue(next.length ? next : undefined);
-                      }}
-                    />
-                    <span className="truncate">{option}</span>
-                  </label>
-                );
-              })}
-              {tipoOptions.filter(option => option.toLowerCase().includes(tipoFilterSearch.toLowerCase().trim())).length === 0 && (
-                <p className="text-sm text-muted-foreground">Sin resultados</p>
-              )}
-            </div>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="w-[180px] justify-between">
-              <span className="truncate text-left">
-                {(() => {
-                  const selected = (table.getColumn("paciente")?.getFilterValue() as string[]) || [];
-                  if (!selected?.length) return "Pacientes...";
-                  if (selected.length === 1) {
-                    const option = pacientesOptions.find(opt => opt.id === selected[0]);
+                  if (pacienteSelected.length === 0) return "Beneficiarios...";
+                  if (pacienteSelected.length === 1) {
+                    const option = pacientesOptions.find((opt) => opt.id === pacienteSelected[0]);
                     return option?.label || "1 seleccionado";
                   }
-                  return `${selected.length} seleccionados`;
+                  return `${pacienteSelected.length} seleccionados`;
                 })()}
               </span>
               <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-64 p-2">
-            <Input
-              placeholder="Buscar paciente"
-              value={pacienteFilterSearch}
-              onChange={(e) => setPacienteFilterSearch(e.target.value)}
+          <DropdownMenuContent className="w-72 p-2">
+            <SearchInput
+              placeholder="Buscar beneficiario"
+              value={pacienteSearch}
+              onChange={(e) => setPacienteSearch(e.target.value)}
               className="mb-2"
             />
             <div className="max-h-[320px] overflow-y-auto space-y-2">
-              {pacientesOptions.filter(opt => opt.label.toLowerCase().includes(pacienteFilterSearch.toLowerCase().trim()))
-                .map((option) => {
-                  const selected = ((table.getColumn("paciente")?.getFilterValue() as string[]) || []);
-                  const isChecked = selected.includes(option.id);
+              {pacientesOptions
+                .filter((opt) => opt.label.toLowerCase().includes(pacienteSearch.toLowerCase().trim()))
+                .map((opt) => {
+                  const isChecked = pacienteSelected.includes(opt.id);
                   return (
-                    <label key={option.id} className="flex items-center gap-2 text-sm">
+                    <label key={opt.id} className="flex items-center gap-2 text-sm">
                       <Checkbox
                         checked={isChecked}
                         onCheckedChange={() => {
-                          const column = table.getColumn("paciente");
-                          if (!column) return;
-                          const current = (column.getFilterValue() as string[]) || [];
-                          const next = isChecked
-                            ? current.filter((id) => id !== option.id)
-                            : [...current, option.id];
-                          column.setFilterValue(next.length ? next : undefined);
+                          setPacienteSelected((current) => {
+                            const next = isChecked
+                              ? current.filter((value) => value !== opt.id)
+                              : [...current, opt.id];
+                            return normalizeStringArray(next);
+                          });
                         }}
                       />
-                      <span className="truncate">{option.label}</span>
+                      <span className="truncate">{opt.label}</span>
                     </label>
                   );
                 })}
-              {pacientesOptions.filter(opt => opt.label.toLowerCase().includes(pacienteFilterSearch.toLowerCase().trim())).length === 0 && (
-                <p className="text-sm text-muted-foreground">Sin resultados</p>
-              )}
+              {pacientesOptions.filter((opt) => opt.label.toLowerCase().includes(pacienteSearch.toLowerCase().trim())).length ===
+                0 && <p className="text-sm text-muted-foreground">Sin resultados</p>}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <Button variant="ghost" size="sm" onClick={clearPacienteFilters} disabled={!filters?.pacienteIds?.length}>
+                Limpiar
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={applyPacienteFilters}
+                disabled={
+                  arraysEqual(pacienteSelected, normalizeStringArray(filters?.pacienteIds)) || loading
+                }
+              >
+                Aplicar
+              </Button>
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
