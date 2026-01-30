@@ -13,7 +13,9 @@ import {
 import {
   ColumnDef,
   SortingState,
+  PaginationState,
   getCoreRowModel,
+  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
@@ -94,6 +96,10 @@ export function StatsCards({ initialStats }: { initialStats: DashboardStats }) {
   const prestaciones = stats.prestacionesDetalle ?? [];
   const [activeCard, setActiveCard] = useState<CardId | null>(null);
   const [sorting, setSorting] = useState<SortingState>([{ id: "fecha", desc: true }]);
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 10,
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -268,9 +274,11 @@ export function StatsCards({ initialStats }: { initialStats: DashboardStats }) {
   const detailTable = useReactTable({
     data: filteredRows,
     columns: detailColumns,
-    state: { sorting },
+    state: { sorting, pagination },
     onSortingChange: setSorting,
+    onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
   });
 
@@ -435,7 +443,12 @@ export function StatsCards({ initialStats }: { initialStats: DashboardStats }) {
             </div>
 
             <div className="shrink-0 px-6 py-4 space-y-4">
-              <DataTablePagination table={detailTable} showSelectedCount={false} showTotalCount={true} />
+              <DataTablePagination
+                table={detailTable}
+                showSelectedCount={false}
+                showTotalCount={true}
+                showPageNumbers={true}
+              />
               <DialogFooter className="p-0 justify-end">
                 <DialogClose asChild>
                   <Button type="button" variant="outline">
