@@ -82,6 +82,18 @@ export async function updateSession(request: NextRequest) {
     }
 
     const path = request.nextUrl.pathname;
+
+    // Verificar si el usuario tiene al menos un rol de backoffice
+    const BACKOFFICE_ROLES = ["administrativo", "auditor", "super_admin", "transporte"];
+    const hasBackofficeRole = roles.some((r) => BACKOFFICE_ROLES.includes(r));
+
+    // Redirigir a acceso-denegado si no tiene ningún rol de backoffice
+    if (path.startsWith("/protected") && !hasBackofficeRole) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/acceso-denegado";
+      return NextResponse.redirect(url);
+    }
+
     const isPrestacionCreate = path.startsWith("/protected/prestaciones/crear");
     const isPrestacionEdit = path.startsWith("/protected/prestaciones/editar/");
     const isBeneficiarioCreate = path.startsWith("/protected/beneficiarios/crear");
