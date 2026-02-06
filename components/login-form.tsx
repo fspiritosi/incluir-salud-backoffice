@@ -71,15 +71,7 @@ export function LoginForm({
                 />
               </div>
               <div className="grid gap-2">
-                <div className="flex items-center">
-                  <Label htmlFor="password">Contraseña</Label>
-                  <Link
-                    href="/auth/forgot-password"
-                    className="ml-auto inline-block text-sm underline-offset-4 hover:underline"
-                  >
-                    Olvidaste tu contraseña?
-                  </Link>
-                </div>
+                <Label htmlFor="password">Contraseña</Label>
                 <Input
                   id="password"
                   type="password"
@@ -100,6 +92,15 @@ export function LoginForm({
                 className="underline underline-offset-4"
               >
                 Registrate
+              </Link>
+            </div>
+            <div className="mt-2 text-center text-sm">
+              ¿Olvidaste tu contraseña?{" "}
+              <Link
+                href="/auth/forgot-password"
+                className="underline underline-offset-4"
+              >
+                Recuperala acá
               </Link>
             </div>
           </form>
