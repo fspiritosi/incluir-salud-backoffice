@@ -43,28 +43,65 @@ export async function listPrestadores(): Promise<{ data: PrestadorRow[] | null; 
     return { data: [], error: null };
   }
 
-  // Enrich with avatar URLs from auth metadata
+  // Enrich with metadata as fallback for missing profile data
   const admin = getAdminSupabase();
-  const avatarMap = new Map<string, string | null>();
+  const metadataMap = new Map<string, {
+    avatar_url: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    phone: string | null;
+    document_number: string | null;
+    full_name: string | null;
+  }>();
 
   if (admin) {
     await Promise.all(
       data.map(async (row) => {
         try {
           const { data: authData } = await admin.auth.admin.getUserById(row.id);
-          const avatarUrl = authData?.user?.user_metadata?.avatar_url ?? null;
-          avatarMap.set(row.id, avatarUrl);
+          const metadata = authData?.user?.user_metadata || {};
+          metadataMap.set(row.id, {
+            avatar_url: metadata.avatar_url ?? null,
+            first_name: metadata.first_name ?? null,
+            last_name: metadata.last_name ?? null,
+            phone: metadata.phone ?? null,
+            document_number: metadata.document_number ?? null,
+            full_name: metadata.full_name ?? null,
+          });
         } catch {
-          avatarMap.set(row.id, null);
+          metadataMap.set(row.id, {
+            avatar_url: null,
+            first_name: null,
+            last_name: null,
+            phone: null,
+            document_number: null,
+            full_name: null,
+          });
         }
       })
     );
   }
 
-  const enriched: PrestadorRow[] = data.map((row) => ({
-    ...row,
-    avatar_url: avatarMap.get(row.id) ?? null,
-  }));
+  const enriched: PrestadorRow[] = data.map((row) => {
+    const metadata = metadataMap.get(row.id) || {
+      avatar_url: null,
+      first_name: null,
+      last_name: null,
+      phone: null,
+      document_number: null,
+      full_name: null,
+    };
+
+    return {
+      ...row,
+      // Use metadata as fallback when profile fields are empty
+      nombre: row.nombre || metadata.first_name || null,
+      apellido: row.apellido || metadata.last_name || null,
+      telefono: row.telefono || metadata.phone || null,
+      documento: row.documento || metadata.document_number || null,
+      avatar_url: metadata.avatar_url,
+    };
+  });
 
   return { data: enriched, error: null };
 }

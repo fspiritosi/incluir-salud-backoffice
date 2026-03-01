@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { Users, Calendar, AlertCircle } from "lucide-react";
 import { getPacientesDeCentro, createPrestacionesPorCentro } from "../../actions";
 
@@ -169,18 +170,19 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
       {/* Selección de Centro */}
       <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm space-y-4">
         <h2 className="text-lg font-semibold">1. Seleccionar Geriátrico</h2>
-        <Select value={centroId} onValueChange={setCentroId} disabled={loading}>
-          <SelectTrigger>
-            <SelectValue placeholder={centros.length ? "Seleccionar centro" : "No hay centros geriátricos"} />
-          </SelectTrigger>
-          <SelectContent>
-            {centros.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.nombre}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Combobox
+          value={centroId}
+          onValueChange={setCentroId}
+          disabled={loading}
+          placeholder={centros.length ? "Seleccionar centro" : "No hay centros geriátricos"}
+          searchPlaceholder="Buscar centro..."
+          emptyText="No se encontraron centros"
+          options={centros.map((c): ComboboxOption => ({
+            value: c.id,
+            label: c.nombre,
+            searchText: c.nombre
+          }))}
+        />
 
         {loadingPacientes && <p className="text-sm text-muted-foreground">Cargando pacientes...</p>}
         {pacientesCount !== null && !loadingPacientes && (
@@ -201,18 +203,19 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
       {/* Selección de Prestador */}
       <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm space-y-4">
         <h2 className="text-lg font-semibold">2. Seleccionar Acompañante Terapéutico</h2>
-        <Select value={prestadorId} onValueChange={setPrestadorId} disabled={loading}>
-          <SelectTrigger>
-            <SelectValue placeholder={prestadores.length ? "Seleccionar AT" : "No hay ATs disponibles"} />
-          </SelectTrigger>
-          <SelectContent>
-            {prestadores.map((p) => (
-              <SelectItem key={p.id} value={p.id}>
-                {p.apellido}, {p.nombre} {p.documento ? `- DNI ${p.documento}` : ""}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Combobox
+          value={prestadorId}
+          onValueChange={setPrestadorId}
+          disabled={loading}
+          placeholder={prestadores.length ? "Seleccionar AT" : "No hay ATs disponibles"}
+          searchPlaceholder="Buscar por nombre, apellido o DNI..."
+          emptyText="No se encontraron acompañantes terapéuticos"
+          options={prestadores.map((p): ComboboxOption => ({
+            value: p.id,
+            label: `${p.apellido}, ${p.nombre}${p.documento ? ` - DNI ${p.documento}` : ""}`,
+            searchText: `${p.apellido} ${p.nombre} ${p.documento || ""}`
+          }))}
+        />
       </div>
 
       {/* Configuración de Fechas */}
