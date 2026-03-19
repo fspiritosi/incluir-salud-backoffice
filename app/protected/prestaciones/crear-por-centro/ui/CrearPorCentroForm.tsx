@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,11 +20,15 @@ import { getPacientesDeCentro, createPrestacionesPorCentro } from "../../actions
 
 type Centro = { id: string; nombre: string };
 type Prestador = { id: string; nombre: string; apellido: string; documento?: string };
+type PacienteOption = { id: string; label: string; documento?: string };
 
 type Props = {
   centros: Centro[];
   prestadores: Prestador[];
 };
+
+const normalizeStringArray = (values: string[] = []) =>
+  Array.from(new Set(values.filter(Boolean)));
 
 export default function CrearPorCentroForm({ centros, prestadores }: Props) {
   const router = useRouter();
@@ -38,6 +42,9 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
   const [notas, setNotas] = useState("");
 
   const [pacientesCount, setPacientesCount] = useState<number | null>(null);
+  const [pacientesOptions, setPacientesOptions] = useState<PacienteOption[]>([]);
+  const [selectedPatients, setSelectedPatients] = useState<string[]>([]);
+  const [pacientesSearch, setPacientesSearch] = useState("");
   const [loadingPacientes, setLoadingPacientes] = useState(false);
 
   // Modo de fechas
@@ -58,12 +65,28 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
   useEffect(() => {
     if (!centroId) {
       setPacientesCount(null);
+      setPacientesOptions([]);
+      setSelectedPatients([]);
+      setPacientesSearch("");
       return;
     }
     setLoadingPacientes(true);
     getPacientesDeCentro(centroId)
-      .then(({ data }) => {
-        setPacientesCount(data?.length || 0);
+      .then(({ data, error }) => {
+        if (error) {
+          console.error("Error cargando pacientes del centro", error);
+          setPacientesOptions([]);
+          setPacientesCount(0);
+          return;
+        }
+        const options = (data || []).map((paciente) => ({
+          id: paciente.id,
+          label: `${paciente.apellido || ""}, ${paciente.nombre || ""}`.trim().replace(/^,\s*/, ""),
+          documento: paciente.documento || undefined,
+        }));
+        setPacientesOptions(options);
+        setSelectedPatients(options.map((p) => p.id));
+        setPacientesCount(options.length);
       })
       .finally(() => setLoadingPacientes(false));
   }, [centroId]);
@@ -114,6 +137,29 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
     setGeneratedDates(out);
   };
 
+  const togglePaciente = (pacienteId: string) => {
+    setSelectedPatients((prev) => {
+      const isSelected = prev.includes(pacienteId);
+      const next = isSelected ? prev.filter((id) => id !== pacienteId) : [...prev, pacienteId];
+      return normalizeStringArray(next);
+    });
+  };
+
+  const clearPacientes = () => setSelectedPatients([]);
+  const selectAllPacientes = () => setSelectedPatients(pacientesOptions.map((p) => p.id));
+
+  const asignacionesPayload = useMemo(() => {
+    return generatedDates.map((fecha) => ({
+      fecha,
+      paciente_ids: normalizeStringArray(selectedPatients),
+    })).filter((entry) => entry.paciente_ids.length > 0);
+  }, [generatedDates, selectedPatients]);
+
+  const totalPrestaciones = useMemo(() => {
+    if (!generatedDates.length) return 0;
+    return generatedDates.length * selectedPatients.length;
+  }, [generatedDates, selectedPatients]);
+
   const handleSubmit = async () => {
     if (!centroId) {
       toast({ title: "Error", description: "Seleccioná un centro", variant: "destructive" });
@@ -127,6 +173,18 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
       toast({ title: "Error", description: "Generá las fechas primero", variant: "destructive" });
       return;
     }
+    if (!pacientesOptions.length) {
+      toast({ title: "Error", description: "El centro seleccionado no tiene pacientes", variant: "destructive" });
+      return;
+    }
+    if (!selectedPatients.length) {
+      toast({
+        title: "Error",
+        description: "Seleccioná al menos un paciente",
+        variant: "destructive",
+      });
+      return;
+    }
 
     setLoading(true);
     try {
@@ -135,6 +193,7 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
         user_id: prestadorId,
         tipo_prestacion: "Acompañante Terapeutico",
         fechas: generatedDates,
+        pacientes_por_fecha: asignacionesPayload,
         monto: monto ? parseFloat(monto) : null,
         descripcion: descripcion || null,
         notas: notas || null,
@@ -160,10 +219,6 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
       setLoading(false);
     }
   };
-
-  const totalPrestaciones = pacientesCount !== null && generatedDates.length > 0
-    ? pacientesCount * generatedDates.length
-    : 0;
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -207,7 +262,7 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
           value={prestadorId}
           onValueChange={setPrestadorId}
           disabled={loading}
-          placeholder={prestadores.length ? "Seleccionar AT" : "No hay ATs disponibles"}
+          placeholder={prestadores.length ? "Seleccionar AT" : "No hay AT disponibles"}
           searchPlaceholder="Buscar por nombre, apellido o DNI..."
           emptyText="No se encontraron acompañantes terapéuticos"
           options={prestadores.map((p): ComboboxOption => ({
@@ -218,9 +273,83 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
         />
       </div>
 
+      {/* Selección de Pacientes */}
+      <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm space-y-4">
+        <h2 className="text-lg font-semibold">3. Seleccionar Pacientes</h2>
+
+        {loadingPacientes && <p className="text-sm text-muted-foreground">Cargando pacientes...</p>}
+        {!loadingPacientes && pacientesOptions.length === 0 && (
+          <div className="flex items-center gap-2 text-sm text-amber-600">
+            <AlertCircle className="h-4 w-4" />
+            <span>Este centro no tiene pacientes asignados. Asigná pacientes primero.</span>
+          </div>
+        )}
+
+        {pacientesOptions.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Users className="h-4 w-4" />
+                <span>{selectedPatients.length} / {pacientesOptions.length} seleccionados</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={selectAllPacientes} disabled={selectedPatients.length === pacientesOptions.length}>
+                  Seleccionar todos
+                </Button>
+                <Button variant="ghost" size="sm" onClick={clearPacientes} disabled={selectedPatients.length === 0}>
+                  Limpiar
+                </Button>
+              </div>
+            </div>
+            <Input
+              placeholder="Buscar por nombre o DNI"
+              value={pacientesSearch}
+              onChange={(e) => setPacientesSearch(e.target.value)}
+              className="text-sm"
+            />
+            <div className="max-h-72 overflow-y-auto rounded-md border border-border/40 bg-muted/10 p-2 space-y-2">
+              {pacientesOptions
+                .filter((opt) => {
+                  const q = pacientesSearch.toLowerCase().trim();
+                  if (!q) return true;
+                  return (
+                    opt.label.toLowerCase().includes(q) ||
+                    (opt.documento || "").toLowerCase().includes(q)
+                  );
+                })
+                .map((opt) => {
+                  const isChecked = selectedPatients.includes(opt.id);
+                  return (
+                    <label key={opt.id} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={() => togglePaciente(opt.id)}
+                      />
+                      <span className="truncate">
+                        {opt.label}
+                        {opt.documento ? ` · DNI ${opt.documento}` : ""}
+                      </span>
+                    </label>
+                  );
+                })}
+              {pacientesOptions.filter((opt) => {
+                const q = pacientesSearch.toLowerCase().trim();
+                if (!q) return true;
+                return (
+                  opt.label.toLowerCase().includes(q) ||
+                  (opt.documento || "").toLowerCase().includes(q)
+                );
+              }).length === 0 && (
+                <p className="text-sm text-muted-foreground">Sin resultados</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Configuración de Fechas */}
       <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm space-y-4">
-        <h2 className="text-lg font-semibold">3. Configurar Fechas</h2>
+        <h2 className="text-lg font-semibold">4. Configurar Fechas</h2>
 
         <div className="flex flex-wrap items-center gap-3">
           <label className="text-sm font-medium">Modo</label>
@@ -355,9 +484,9 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
 
       {/* Opciones adicionales */}
       <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm space-y-4">
-        <h2 className="text-lg font-semibold">4. Opciones adicionales</h2>
+        <h2 className="text-lg font-semibold">5. Opciones adicionales</h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <label className="text-sm font-medium">Monto (opcional)</label>
             <Input
@@ -408,8 +537,8 @@ export default function CrearPorCentroForm({ centros, prestadores }: Props) {
               <p className="font-semibold text-green-800">
                 Se crearán {totalPrestaciones} prestaciones
               </p>
-              <p className="text-sm text-green-700">
-                {pacientesCount} pacientes × {generatedDates.length} fechas
+              <p className="text-sm text-muted-foreground">
+                {selectedPatients.length} pacientes × {generatedDates.length} fechas
               </p>
             </div>
             <Button onClick={handleSubmit} disabled={loading} size="lg">

@@ -46,6 +46,8 @@ type PrestacionesFilters = {
 
 type CheckedState = boolean | 'indeterminate';
 
+const ESTADO_OPTIONS = ["pendiente", "completada", "cancelada"] as const;
+
 export type PrestacionRow = {
   id: string;
   tipo_prestacion: string;
@@ -110,6 +112,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
   const [tipoFilterSearch, setTipoFilterSearch] = useState('');
   const [pacienteFilterSearch, setPacienteFilterSearch] = useState('');
   const [prestadorFilterSearch, setPrestadorFilterSearch] = useState('');
+  const [prestadorSelected, setPrestadorSelected] = useState<string[]>([]);
+  const [estadoFilterSearch, setEstadoFilterSearch] = useState('');
+  const [estadoSelected, setEstadoSelected] = useState<string[]>([]);
   const [diaFilterSearch, setDiaFilterSearch] = useState('');
 
   const enhancedData = useMemo(() => {
@@ -132,6 +137,12 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [enhancedData]);
+
+  const estadoOptionsFiltradas = useMemo(() => {
+    const q = estadoFilterSearch.trim().toLowerCase();
+    if (!q) return ESTADO_OPTIONS;
+    return ESTADO_OPTIONS.filter((estado) => estado.toLowerCase().includes(q));
+  }, [estadoFilterSearch]);
 
   const pacientesOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -256,14 +267,14 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       },
       meta: {
         filterType: "select",
-        options: ["pendiente", "completada", "cancelada", "todos"]
+        options: ["pendiente", "completada", "cancelada"],
       },
       filterFn: (row, columnId, filterValue) => {
-        const val = (filterValue as string) ?? "";
-        if (!val || val === "todos") return true;
+        const values = (filterValue as string[]) || [];
+        if (!Array.isArray(values) || values.length === 0) return true;
         const estado = (row.getValue(columnId) as string | null) ?? "";
-        return estado.toLowerCase() === val.toLowerCase();
-      }
+        return values.map((v) => v.toLowerCase()).includes(estado.toLowerCase());
+      },
     },
     {
       accessorKey: "cronico",
@@ -879,12 +890,20 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
             table.getColumn("paciente_documento")?.setFilterValue(event.target.value)
           }
         />
-        <DropdownMenu>
+        <DropdownMenu
+          onOpenChange={(open) => {
+            if (!open) return;
+            const current = ((table.getColumn("prestador")?.getFilterValue() as string[]) || []);
+            setPrestadorSelected(normalizeStringArray(current));
+          }}
+        >
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="w-[180px] justify-between">
               <span className="truncate text-left">
                 {(() => {
-                  const selected = (table.getColumn("prestador")?.getFilterValue() as string[]) || [];
+                  const selected = prestadorSelected.length
+                    ? prestadorSelected
+                    : ((table.getColumn("prestador")?.getFilterValue() as string[]) || []);
                   if (!selected?.length) return "Prestadores...";
                   if (selected.length === 1) {
                     const option = prestadoresOptions.find(opt => opt.id === selected[0]);
@@ -906,20 +925,18 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
             <div className="max-h-[320px] overflow-y-auto space-y-2">
               {prestadoresOptions.filter(opt => opt.label.toLowerCase().includes(prestadorFilterSearch.toLowerCase().trim()))
                 .map((option) => {
-                  const selected = ((table.getColumn("prestador")?.getFilterValue() as string[]) || []);
-                  const isChecked = selected.includes(option.id);
+                  const isChecked = prestadorSelected.includes(option.id);
                   return (
                     <label key={option.id} className="flex items-center gap-2 text-sm">
                       <Checkbox
                         checked={isChecked}
                         onCheckedChange={() => {
-                          const column = table.getColumn("prestador");
-                          if (!column) return;
-                          const current = (column.getFilterValue() as string[]) || [];
-                          const next = isChecked
-                            ? current.filter((id) => id !== option.id)
-                            : [...current, option.id];
-                          column.setFilterValue(next.length ? next : undefined);
+                          setPrestadorSelected((current) => {
+                            const next = isChecked
+                              ? current.filter((id) => id !== option.id)
+                              : [...current, option.id];
+                            return normalizeStringArray(next);
+                          });
                         }}
                       />
                       <span className="truncate">{option.label}</span>
@@ -930,26 +947,120 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
                 <p className="text-sm text-muted-foreground">Sin resultados</p>
               )}
             </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setPrestadorSelected([]);
+                  table.getColumn("prestador")?.setFilterValue(undefined);
+                }}
+                disabled={prestadorSelected.length === 0}
+              >
+                Limpiar
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => {
+                  const next = normalizeStringArray(prestadorSelected);
+                  table.getColumn("prestador")?.setFilterValue(next.length ? next : undefined);
+                }}
+                disabled={arraysEqual(
+                  normalizeStringArray(prestadorSelected),
+                  normalizeStringArray((table.getColumn("prestador")?.getFilterValue() as string[]) || [])
+                )}
+              >
+                Aplicar
+              </Button>
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
-        <div className="w-[140px]">
-          <Select
-            value={(table.getColumn("estado")?.getFilterValue() as string) ?? ""}
-            onValueChange={(value: string) =>
-              table.getColumn("estado")?.setFilterValue(value)
-            }
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Estado..." />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos</SelectItem>
-              <SelectItem value="pendiente">Pendiente</SelectItem>
-              <SelectItem value="completada">Completada</SelectItem>
-              <SelectItem value="cancelada">Cancelada</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        <DropdownMenu
+          onOpenChange={(open) => {
+            if (!open) return;
+            const current = ((table.getColumn("estado")?.getFilterValue() as string[]) || []);
+            setEstadoSelected(normalizeStringArray(current));
+          }}
+        >
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="w-[160px] justify-between">
+              <span className="truncate text-left">
+                {(() => {
+                  const selected = estadoSelected.length
+                    ? estadoSelected
+                    : ((table.getColumn("estado")?.getFilterValue() as string[]) || []);
+                  if (!selected.length) return "Estado...";
+                  if (selected.length === 1) {
+                    const value = selected[0];
+                    return value.charAt(0).toUpperCase() + value.slice(1);
+                  }
+                  return `${selected.length} seleccionados`;
+                })()}
+              </span>
+              <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-56 p-2">
+            <Input
+              placeholder="Buscar estado"
+              value={estadoFilterSearch}
+              onChange={(e) => setEstadoFilterSearch(e.target.value)}
+              className="mb-2"
+            />
+            <div className="max-h-[260px] overflow-y-auto space-y-2">
+              {estadoOptionsFiltradas.map((estado) => {
+                const isChecked = estadoSelected.includes(estado);
+                return (
+                  <label key={estado} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={isChecked}
+                      onCheckedChange={() => {
+                        setEstadoSelected((current) => {
+                          const next = isChecked
+                            ? current.filter((value) => value !== estado)
+                            : [...current, estado];
+                          return normalizeStringArray(next);
+                        });
+                      }}
+                    />
+                    <span className="capitalize">{estado}</span>
+                  </label>
+                );
+              })}
+              {estadoOptionsFiltradas.length === 0 && (
+                <p className="text-sm text-muted-foreground">Sin resultados</p>
+              )}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setEstadoSelected([]);
+                  table.getColumn("estado")?.setFilterValue(undefined);
+                }}
+                disabled={estadoSelected.length === 0}
+              >
+                Limpiar
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => {
+                  const next = normalizeStringArray(estadoSelected);
+                  table.getColumn("estado")?.setFilterValue(next.length ? next : undefined);
+                }}
+                disabled={arraysEqual(
+                  normalizeStringArray(estadoSelected),
+                  normalizeStringArray((table.getColumn("estado")?.getFilterValue() as string[]) || [])
+                )}
+              >
+                Aplicar
+              </Button>
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <DataTable table={table} isLoading={loading} />
