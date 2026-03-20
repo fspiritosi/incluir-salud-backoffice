@@ -22,6 +22,10 @@ interface ComboboxProps {
   emptyText?: string
   disabled?: boolean
   className?: string
+  onSearchChange?: (q: string) => void
+  externalSearch?: boolean
+  loading?: boolean
+  selectedLabel?: string
 }
 
 export function Combobox({
@@ -33,16 +37,40 @@ export function Combobox({
   emptyText = "No se encontraron resultados.",
   disabled = false,
   className,
+  onSearchChange,
+  externalSearch = false,
+  loading = false,
+  selectedLabel,
 }: ComboboxProps) {
   const [open, setOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
 
   const selectedOption = options.find((option) => option.value === value)
   
-  const filteredOptions = options.filter((option) => {
-    const searchText = option.searchText || option.label
-    return searchText.toLowerCase().includes(searchTerm.toLowerCase())
-  })
+  const normalize = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // strip diacritics
+      .replace(/[^a-z0-9 ]+/g, ' ') // strip punctuation/symbols
+      .replace(/\s+/g, ' ') // collapse spaces
+      .trim()
+  const onlyDigits = (s: string) => (s.match(/\d+/g)?.join('') || '')
+
+  const filteredOptions = externalSearch
+    ? options
+    : options.filter((option) => {
+        const raw = option.searchText || option.label
+        const haystack = normalize(raw)
+        const digits = onlyDigits(raw)
+        const q = normalize(searchTerm)
+        if (!q) return true
+        const tokens = q.split(' ').filter(Boolean)
+        const qDigits = onlyDigits(searchTerm)
+        const tokensMatch = tokens.every(t => haystack.includes(t))
+        const dniMatch = qDigits ? digits.includes(qDigits) : false
+        return tokensMatch || dniMatch
+      })
 
   const handleSelect = (optionValue: string) => {
     onValueChange?.(optionValue)
@@ -58,6 +86,7 @@ export function Combobox({
   return (
     <div className={cn("relative", className)}>
       <Button
+        type="button"
         variant="outline"
         role="combobox"
         aria-expanded={open}
@@ -66,7 +95,7 @@ export function Combobox({
         onClick={() => setOpen(!open)}
       >
         <span className="truncate">
-          {selectedOption ? selectedOption.label : placeholder}
+          {selectedOption ? selectedOption.label : (value && selectedLabel ? selectedLabel : placeholder)}
         </span>
         <div className="flex items-center gap-2">
           {selectedOption && (
@@ -87,7 +116,15 @@ export function Combobox({
               <Input
                 placeholder={searchPlaceholder}
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value)
+                  onSearchChange?.(e.target.value)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                  }
+                }}
                 className="pl-8"
                 autoFocus
               />
@@ -95,7 +132,10 @@ export function Combobox({
           </div>
           
           <div className="max-h-[200px] overflow-y-auto">
-            {filteredOptions.length === 0 ? (
+            {loading && (
+              <div className="p-3 text-sm text-gray-500 text-center">Buscando...</div>
+            )}
+            {!loading && filteredOptions.length === 0 ? (
               <div className="p-4 text-sm text-gray-500 text-center">
                 {emptyText}
               </div>

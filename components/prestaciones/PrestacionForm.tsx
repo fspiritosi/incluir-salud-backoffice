@@ -27,6 +27,7 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/components/ui/use-toast';
 import { ChevronDown } from 'lucide-react';
 import { listPrestadoresByEspecialidad } from '@/app/protected/prestaciones/actions';
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 
 type PrestacionFormPaciente = {
   id: string;
@@ -50,10 +51,15 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
-  const [fPaciente, setFPaciente] = useState('');
+  
   const [fObra, setFObra] = useState('');
   const [fPrestador, setFPrestador] = useState('');
   const [prestadoresFiltrados, setPrestadoresFiltrados] = useState<{ id: string; apellido: string; nombre: string; documento?: string }[]>([]);
+  const [pacOpts, setPacOpts] = useState<ComboboxOption[]>([]);
+  const [pacLoading, setPacLoading] = useState(false);
+  const [pacSearch, setPacSearch] = useState('');
+  const [pacDebounced, setPacDebounced] = useState('');
+  const [pacSelectedLabel, setPacSelectedLabel] = useState<string | undefined>(undefined);
 
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkModeType, setBulkModeType] = useState<'cada-n' | 'dias-semana' | 'fechas-custom'>('cada-n');
@@ -65,6 +71,56 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
   const [bulkWeekdays, setBulkWeekdays] = useState<{[k:string]: boolean}>({
     lun: true, mar: false, mie: true, jue: false, vie: true, sab: false, dom: false,
   });
+
+  useEffect(() => {
+    const t = setTimeout(() => setPacDebounced(pacSearch), 250);
+    return () => clearTimeout(t);
+  }, [pacSearch]);
+
+  useEffect(() => {
+    let abort = false;
+    const run = async () => {
+      setPacLoading(true);
+      try {
+        const res = await fetch(`/api/pacientes/search?q=${encodeURIComponent(pacDebounced)}&limit=1000`);
+        const json = await res.json();
+        if (abort) return;
+        const list: { id: string; nombre: string; apellido: string; documento?: string }[] = json?.data || [];
+        const opts: ComboboxOption[] = list.map((p) => ({
+          value: p.id,
+          label: `${p.apellido}, ${p.nombre}${p.documento ? ` - DNI ${p.documento}` : ''}`,
+          searchText: `${p.apellido} ${p.nombre} ${p.documento || ''}`,
+        }));
+        setPacOpts(opts);
+        const cur = form.getValues('paciente_id');
+        if (cur && !pacSelectedLabel) {
+          const found = opts.find(o => o.value === cur);
+          if (found) setPacSelectedLabel(found.label);
+        }
+      } catch { setPacOpts([]); }
+      finally { if (!abort) setPacLoading(false); }
+    };
+    run();
+    return () => { abort = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pacDebounced]);
+
+  useEffect(() => {
+    (async () => {
+      const id = form.getValues('paciente_id');
+      if (!id) return;
+      try {
+        const res = await fetch(`/api/pacientes/search?id=${encodeURIComponent(id)}&limit=1`);
+        const json = await res.json();
+        const row = json?.data?.[0];
+        if (row) {
+          const lbl = `${row.apellido}, ${row.nombre}${row.documento ? ` - DNI ${row.documento}` : ''}`;
+          setPacSelectedLabel(lbl);
+        }
+      } catch {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // (Se declara después de inicializar 'form')
 
@@ -129,6 +185,8 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
 
   const form = useForm<PrestacionFormValues>({
     resolver: zodResolver(prestacionSchema),
+    mode: 'onSubmit',
+    reValidateMode: 'onSubmit',
     defaultValues: {
       tipo_prestacion: (fixedTipoPrestacion ?? initialData?.tipo_prestacion) || '',
       obra_social_id: initialData?.obra_social_id || '',
@@ -178,7 +236,16 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
       setLoading(true);
 
       const selectedPaciente = pacientes.find((p) => p.id === values.paciente_id);
-      if (!selectedPaciente?.tiene_ubicacion) {
+      let tieneUbic = selectedPaciente?.tiene_ubicacion === true;
+      if (!tieneUbic) {
+        try {
+          const res = await fetch(`/api/pacientes/search?id=${encodeURIComponent(values.paciente_id)}&limit=1`);
+          const json = await res.json();
+          const row = json?.data?.[0];
+          tieneUbic = Boolean(row?.tiene_ubicacion);
+        } catch {}
+      }
+      if (!tieneUbic) {
         throw new Error('El paciente seleccionado no tiene geolocalización. Asignala antes de crear la prestación.');
       }
 
@@ -261,56 +328,24 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Paciente</FormLabel>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={loading}
-                      className="w-full justify-between h-10 rounded-md border border-input bg-background px-3 text-sm font-normal hover:bg-background ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <span className={field.value ? '' : 'text-muted-foreground'}>{(() => {
-                        const p = pacientes.find(p => p.id === field.value);
-                        return p ? `${p.apellido}, ${p.nombre}` : 'Seleccionar paciente';
-                      })()}</span>
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-80 p-2">
-                    <Input
-                      placeholder="Buscar paciente (Nombre Apellido o DNI)"
-                      value={fPaciente}
-                      onChange={(e) => setFPaciente(e.target.value)}
-                      className="mb-2"
-                    />
-
-                    {pacientes
-                      .filter(p => {
-                        const full = `${p.apellido} ${p.nombre}`.toLowerCase();
-                        const docRaw = (p.documento || '');
-                        const doc = docRaw.toLowerCase();
-                        const docDigits = docRaw.replace(/\D/g, '');
-                        const q = fPaciente.toLowerCase().trim();
-                        const qDigits = q.replace(/\D/g, '');
-                        return (
-                          full.includes(q) ||
-                          doc.includes(q) ||
-                          (!!qDigits && docDigits.includes(qDigits))
-                        );
-                      })
-                      .map((p) => (
-                        <DropdownMenuItem
-                          key={p.id}
-                          onClick={() => {
-                            field.onChange(p.id);
-                          }}
-                        >
-                          {p.apellido}, {p.nombre}
-                        </DropdownMenuItem>
-                      ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <FormMessage />
+                <Combobox
+                  value={field.value}
+                  onValueChange={(v) => {
+                    field.onChange(v);
+                    const found = pacOpts.find(o => o.value === v);
+                    if (found) setPacSelectedLabel(found.label);
+                  }}
+                  disabled={loading}
+                  placeholder={'Seleccionar paciente'}
+                  searchPlaceholder="Buscar por nombre, apellido o DNI..."
+                  emptyText="Sin resultados"
+                  options={pacOpts}
+                  externalSearch
+                  loading={pacLoading}
+                  onSearchChange={setPacSearch}
+                  selectedLabel={pacSelectedLabel}
+                />
+                {(form.formState.isSubmitted || form.getFieldState('paciente_id').isTouched) && <FormMessage />}
               </FormItem>
             )}
           />
@@ -338,7 +373,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
                     </SelectContent>
                   </Select>
                 </FormControl>
-                <FormMessage />
+                {(form.formState.isSubmitted || form.getFieldState('tipo_prestacion').isTouched) && <FormMessage />}
               </FormItem>
             )}
           />
@@ -350,25 +385,20 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Centro *</FormLabel>
-                  <FormControl>
-                    <Select
-                      value={field.value || ''}
-                      onValueChange={field.onChange}
-                      disabled={loading}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder={centros.length ? 'Seleccionar centro' : 'No hay centros activos'} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {centros.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.nombre}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </FormControl>
-                  <FormMessage />
+                  <Combobox
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    disabled={loading}
+                    placeholder={centros.length ? 'Seleccionar centro' : 'No hay centros activos'}
+                    searchPlaceholder="Buscar centro..."
+                    emptyText="Sin resultados"
+                    options={centros.map((c): ComboboxOption => ({
+                      value: c.id,
+                      label: c.nombre,
+                      searchText: c.nombre,
+                    }))}
+                  />
+                  {(form.formState.isSubmitted || form.getFieldState('centro_id').isTouched) && <FormMessage />}
                 </FormItem>
               )}
             />
@@ -445,7 +475,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
                 <FormControl>
                   <Input type="datetime-local" {...field} disabled={loading} />
                 </FormControl>
-                <FormMessage />
+                {(form.formState.isSubmitted || form.getFieldState('fecha').isTouched) && <FormMessage />}
               </FormItem>
             )}
           />
