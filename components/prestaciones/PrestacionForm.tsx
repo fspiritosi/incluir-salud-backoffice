@@ -235,7 +235,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
     try {
       setLoading(true);
 
-      let selectedPaciente = pacientes.find((p) => p.id === values.paciente_id);
+      const selectedPaciente = pacientes.find((p) => p.id === values.paciente_id);
       let tieneUbic = selectedPaciente?.tiene_ubicacion === true;
       if (!tieneUbic) {
         try {

@@ -76,7 +76,8 @@ export async function GET(req: NextRequest) {
     }))
 
     return NextResponse.json({ data: mapped })
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || 'Error buscando pacientes' }, { status: 500 })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Error buscando pacientes'
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
