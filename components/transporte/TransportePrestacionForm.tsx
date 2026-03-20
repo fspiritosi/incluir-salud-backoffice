@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useDeferredValue, useEffect, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 
@@ -72,6 +72,8 @@ export function TransportePrestacionForm({
   const [fPaciente, setFPaciente] = useState<string>("");
   const [pacienteMenuOpen, setPacienteMenuOpen] = useState(false);
   const [visiblePacientesCount, setVisiblePacientesCount] = useState(20);
+  const [fCentro, setFCentro] = useState("");
+  const [centroMenuOpen, setCentroMenuOpen] = useState(false);
 
   const deferredPacienteQuery = useDeferredValue(fPaciente.trim());
   const pacientesAbortRef = useRef<AbortController | null>(null);
@@ -82,6 +84,11 @@ export function TransportePrestacionForm({
   const [pacientesLoading, setPacientesLoading] = useState(false);
 
   const pacientesFiltrados = pacientesOptions;
+  const centrosFiltrados = useMemo(() => {
+    const q = fCentro.trim().toLowerCase();
+    if (!q) return centros;
+    return centros.filter((c) => c.nombre.toLowerCase().includes(q));
+  }, [centros, fCentro]);
 
   const fetchPacientesPage = (pageToLoad: number, append: boolean) => {
     pacientesAbortRef.current?.abort();
@@ -455,18 +462,59 @@ export function TransportePrestacionForm({
               <FormItem>
                 <FormLabel>Centro de tratamiento</FormLabel>
                 <FormControl>
-                  <Select value={field.value || ""} onValueChange={field.onChange} disabled={loading}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder={centros.length ? "Seleccionar centro" : "No hay centros activos"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {centros.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.nombre}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <DropdownMenu
+                    open={centroMenuOpen}
+                    onOpenChange={(open) => {
+                      setCentroMenuOpen(open);
+                      if (!open) {
+                        setFCentro("");
+                      }
+                    }}
+                  >
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={loading || centros.length === 0}
+                        className="w-full justify-between h-10 rounded-md border border-input bg-background px-3 text-sm font-normal hover:bg-background ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <span className={field.value ? "" : "text-muted-foreground"}>
+                          {(() => {
+                            const centro = centros.find((c) => c.id === field.value);
+                            if (centro) return centro.nombre;
+                            return centros.length ? "Seleccionar centro" : "No hay centros activos";
+                          })()}
+                        </span>
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] p-2">
+                      <Input
+                        placeholder="Buscar centro"
+                        value={fCentro}
+                        onChange={(e) => setFCentro(e.target.value)}
+                        className="mb-2"
+                        disabled={loading}
+                      />
+
+                      <div className="max-h-60 overflow-y-auto">
+                        {centrosFiltrados.map((c) => (
+                          <DropdownMenuItem
+                            key={c.id}
+                            onClick={() => {
+                              field.onChange(c.id);
+                            }}
+                          >
+                            {c.nombre}
+                          </DropdownMenuItem>
+                        ))}
+
+                        {!centrosFiltrados.length && (
+                          <DropdownMenuItem disabled>Sin resultados</DropdownMenuItem>
+                        )}
+                      </div>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </FormControl>
                 <FormMessage />
               </FormItem>

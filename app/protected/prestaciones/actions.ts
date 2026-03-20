@@ -31,6 +31,53 @@ function extractDateOnly(isoString: string): string {
   return isoString.split('T')[0];
 }
 
+// Normalizar fecha-hora a ISO
+const normalizeDateTimeIso = (value: string) => {
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return value;
+  }
+};
+
+// Detectar conflictos: mismo paciente, mismo tipo y misma fecha/hora (sin importar prestador)
+async function findConflictingPrestaciones(
+  supabase: any,
+  records: Array<{ paciente_id?: string | null; tipo_prestacion: string; fecha: string }>
+): Promise<{ paciente_id: string | null | undefined; fecha: string; tipo_prestacion: string }[]> {
+  if (!records.length) return [];
+
+  const pacientesIds = [...new Set(records.map((r) => r.paciente_id).filter(Boolean))] as string[];
+  const tipos = [...new Set(records.map((r) => r.tipo_prestacion))];
+  const fechasNorm = records.map((r) => normalizeDateTimeIso(r.fecha)).filter(Boolean) as string[];
+
+  if (!pacientesIds.length || !tipos.length || !fechasNorm.length) return [];
+
+  const sortedFechas = [...fechasNorm].sort();
+  const minFecha = sortedFechas[0];
+  const maxFecha = sortedFechas[sortedFechas.length - 1];
+
+  const { data: existing, error } = await supabase
+    .from("prestaciones")
+    .select("paciente_id, fecha, tipo_prestacion")
+    .in("paciente_id", pacientesIds)
+    .in("tipo_prestacion", tipos)
+    .gte("fecha", minFecha)
+    .lte("fecha", maxFecha);
+
+  if (error || !existing) return [];
+
+  const existingKeys = new Set(
+    existing.map(
+      (e: any) => `${e.paciente_id || 'null'}|${normalizeDateTimeIso(e.fecha)}|${e.tipo_prestacion}`
+    )
+  );
+
+  return records.filter((r) =>
+    existingKeys.has(`${r.paciente_id || 'null'}|${normalizeDateTimeIso(r.fecha)}|${r.tipo_prestacion}`)
+  ).map((r) => ({ paciente_id: r.paciente_id, fecha: normalizeDateTimeIso(r.fecha), tipo_prestacion: r.tipo_prestacion }));
+}
+
 // Verificar si ya existe una prestación con los mismos datos clave
 async function checkDuplicatePrestacion(
   supabase: any,
@@ -844,11 +891,17 @@ export async function getPacientesDeCentro(centroId: string) {
 }
 
 // Crear prestaciones para todos los pacientes de un centro
+type PacientesPorFechaPayload = {
+  fecha: string;
+  paciente_ids: string[];
+};
+
 export async function createPrestacionesPorCentro(params: {
   centro_id: string;
   user_id: string;
   tipo_prestacion: string;
   fechas: string[];
+  pacientes_por_fecha?: PacientesPorFechaPayload[];
   monto?: number | null;
   descripcion?: string | null;
   notas?: string | null;
@@ -875,16 +928,37 @@ export async function createPrestacionesPorCentro(params: {
     return { data: null, error: { message: "No hay fechas válidas" } };
   }
 
+  const pacientesValidos = new Map(pacientes.map((p) => [p.id, p]));
+
+  const parseFecha = (fechaRaw: string) => {
+    try {
+      return new Date(fechaRaw).toISOString();
+    } catch {
+      return null;
+    }
+  };
+
   // Crear una prestación por cada paciente por cada fecha
   const records: any[] = [];
-  for (const paciente of pacientes) {
-    for (const fecha of fechasValidas) {
+
+  const assignments = params.pacientes_por_fecha?.length
+    ? params.pacientes_por_fecha
+    : fechasValidas.map((fecha) => ({ fecha, paciente_ids: pacientes.map((p) => p.id) }));
+
+  for (const assignment of assignments) {
+    const fechaISO = parseFecha(assignment.fecha);
+    if (!fechaISO) continue;
+
+    const pacientesAsignados = (assignment.paciente_ids || []).filter((id) => pacientesValidos.has(id));
+    if (pacientesAsignados.length === 0) continue;
+
+    for (const pacienteId of pacientesAsignados) {
       records.push({
         user_id: params.user_id,
-        paciente_id: paciente.id,
+        paciente_id: pacienteId,
         centro_id: params.centro_id,
         tipo_prestacion: params.tipo_prestacion,
-        fecha,
+        fecha: fechaISO,
         estado: "pendiente",
         monto: params.monto ?? null,
         descripcion: params.descripcion ?? null,
@@ -895,15 +969,41 @@ export async function createPrestacionesPorCentro(params: {
     }
   }
 
+  if (records.length === 0) {
+    return {
+      data: null,
+      error: { message: "No hay pacientes seleccionados para las fechas indicadas" },
+    };
+  }
+
+  // Conflictos: mismo paciente, mismo tipo y misma fecha/hora, sin importar prestador
+  const conflicts = await findConflictingPrestaciones(supabase, records);
+  if (conflicts.length > 0) {
+    const pacientesConflictivos = [...new Set(conflicts.map((c) => c.paciente_id).filter(Boolean))];
+    return {
+      data: null,
+      error: {
+        message:
+          "Existen prestaciones ya cargadas para uno o más pacientes en las mismas fechas/horarios", // msg amigable
+        detalles: {
+          pacientes: pacientesConflictivos,
+          totalConflictos: conflicts.length,
+        },
+      },
+    };
+  }
+
   // Limitar a 500 registros por seguridad
   const recordsLimited = records.slice(0, 500);
+  const resumenPacientes = new Set(recordsLimited.map((r) => r.paciente_id)).size;
+  const resumenFechas = new Set(recordsLimited.map((r) => extractDateOnly(r.fecha))).size;
 
   // Filtrar duplicados
   const { newRecords, duplicateCount } = await filterExistingPrestaciones(supabase, recordsLimited);
 
   if (newRecords.length === 0) {
     return { 
-      data: { created: 0, pacientes: pacientes.length, fechas: fechasValidas.length, duplicateCount },
+      data: { created: 0, pacientes: resumenPacientes, fechas: resumenFechas, duplicateCount },
       error: null,
       message: `Todas las ${duplicateCount} prestaciones ya existían`
     };
@@ -924,8 +1024,8 @@ export async function createPrestacionesPorCentro(params: {
   return { 
     data: { 
       created: data?.length || 0, 
-      pacientes: pacientes.length,
-      fechas: fechasValidas.length,
+      pacientes: resumenPacientes,
+      fechas: resumenFechas,
       duplicateCount 
     }, 
     error: null 
