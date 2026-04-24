@@ -176,14 +176,21 @@ async function filterExistingPrestaciones(
 }
 
 // Filtrar prestadores por especialidad que debe coincidir con el tipo de prestación seleccionado
+const ESPECIALIDAD_MAP: Record<string, string> = {
+  'Acompañante Terapeutico': 'acompanante_terapeutico',
+  'Kinesiología': 'kinesiologia',
+  'Transporte': 'transporte',
+};
+
 export async function listPrestadoresByEspecialidad(especialidad: string) {
   const supabase = await createClient();
+  const dbEspecialidad = ESPECIALIDAD_MAP[especialidad] ?? especialidad;
   const { data, error } = await supabase
     .from('profiles')
     .select('id, nombre, apellido, documento')
     .eq('tipo_usuario', 'prestador')
     .eq('activo', true)
-    .eq('especialidad', especialidad)
+    .eq('especialidad', dbEspecialidad)
     .order('apellido', { ascending: true })
     .order('nombre', { ascending: true });
   if (error) {

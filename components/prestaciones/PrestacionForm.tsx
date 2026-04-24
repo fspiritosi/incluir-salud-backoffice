@@ -384,7 +384,7 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
               name="centro_id"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Centro *</FormLabel>
+                  <FormLabel>Centro{tipoPrestacion === 'Transporte' ? ' *' : ''}</FormLabel>
                   <Combobox
                     value={field.value}
                     onValueChange={field.onChange}
