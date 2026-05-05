@@ -689,12 +689,47 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       setOptional("fechaHasta", next.fechaHasta ?? "");
       setArrayParam("pacienteIds", normalizeStringArray(next.pacienteIds));
 
+      try {
+        localStorage.setItem(
+          "prestaciones_filters",
+          JSON.stringify({
+            fechaDesde: next.fechaDesde ?? "",
+            fechaHasta: next.fechaHasta ?? "",
+            pacienteIds: normalizeStringArray(next.pacienteIds),
+          })
+        );
+      } catch {}
+
       const query = params.toString();
       router.replace(query ? `${pathname}?${query}` : pathname);
       router.refresh();
     },
     [pathname, router, searchParams]
   );
+
+  useEffect(() => {
+    const hasFilterParams =
+      searchParams?.has("fechaDesde") ||
+      searchParams?.has("fechaHasta") ||
+      searchParams?.has("pacienteIds");
+    if (hasFilterParams) return;
+    try {
+      const saved = localStorage.getItem("prestaciones_filters");
+      if (!saved) return;
+      const parsed = JSON.parse(saved);
+      const hasAny =
+        parsed.fechaDesde || parsed.fechaHasta || parsed.pacienteIds?.length;
+      if (!hasAny) return;
+      const p = new URLSearchParams();
+      if (parsed.fechaDesde) p.set("fechaDesde", parsed.fechaDesde);
+      if (parsed.fechaHasta) p.set("fechaHasta", parsed.fechaHasta);
+      (parsed.pacienteIds || []).forEach((id: string) =>
+        p.append("pacienteIds", id)
+      );
+      router.replace(`${pathname}?${p.toString()}`);
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     setFechaDesde(filters?.fechaDesde ?? "");

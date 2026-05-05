@@ -237,12 +237,52 @@ export function BeneficiariosTable({
         params.set("pageSize", String(pagination.pageSize));
       }
 
+      try {
+        localStorage.setItem(
+          "beneficiarios_filters",
+          JSON.stringify({
+            search: nextFilters.search,
+            ids: nextFilters.ids,
+            ciudades: nextFilters.ciudades,
+            activo: nextFilters.activo,
+          })
+        );
+      } catch {}
+
       const query = params.toString();
       router.replace(query ? `${pathname}?${query}` : pathname);
       router.refresh();
     },
     [pagination?.pageSize, pathname, router, searchParams]
   );
+
+  useEffect(() => {
+    const hasFilterParams =
+      searchParams?.has("search") ||
+      searchParams?.has("ids") ||
+      searchParams?.has("ciudades") ||
+      searchParams?.has("activo");
+    if (hasFilterParams) return;
+    try {
+      const saved = localStorage.getItem("beneficiarios_filters");
+      if (!saved) return;
+      const parsed: BeneficiarioFilters = JSON.parse(saved);
+      const hasAny =
+        parsed.search ||
+        parsed.ids?.length ||
+        parsed.ciudades?.length ||
+        (parsed.activo && parsed.activo !== "todos");
+      if (!hasAny) return;
+      const p = new URLSearchParams();
+      if (parsed.search) p.set("search", parsed.search);
+      (parsed.ids || []).forEach((id) => p.append("ids", id));
+      (parsed.ciudades || []).forEach((c) => p.append("ciudades", c));
+      if (parsed.activo && parsed.activo !== "todos")
+        p.set("activo", parsed.activo);
+      router.replace(`${pathname}?${p.toString()}`);
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchIdentityPage = useCallback(
     async (pageToLoad: number, append: boolean) => {
