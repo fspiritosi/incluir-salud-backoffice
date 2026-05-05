@@ -311,24 +311,27 @@ export default function ImportarBeneficiariosPage() {
             <div>
               <CardTitle>Observaciones</CardTitle>
               <CardDescription>
-                {serverError || "Algunas filas no se pudieron importar. Revisá la lista para corregirlas."}
+                {serverError || `${rowErrors.length} fila${rowErrors.length !== 1 ? 's' : ''} no se pud${rowErrors.length !== 1 ? 'ieron' : 'o'} importar. El resto se procesó correctamente.`}
               </CardDescription>
             </div>
           </CardHeader>
           {rowErrors.length > 0 && (
             <CardContent>
               <ScrollArea className="max-h-72">
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Las siguientes filas del archivo no se importaron. El número indica la fila en el Excel (la fila 2 es la primera de datos).
+                </p>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-24">Fila</TableHead>
-                      <TableHead>Detalle</TableHead>
+                      <TableHead className="w-32">Fila en Excel</TableHead>
+                      <TableHead>Motivo</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {rowErrors.map((err) => (
                       <TableRow key={`${err.row}-${err.message}`}>
-                        <TableCell>{err.row}</TableCell>
+                        <TableCell className="font-mono">{err.row}</TableCell>
                         <TableCell>{err.message}</TableCell>
                       </TableRow>
                     ))}
