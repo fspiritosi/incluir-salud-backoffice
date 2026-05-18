@@ -15,6 +15,12 @@ interface DataTablePaginationProps<TData> {
   showTotalCount?: boolean;
   showPageNumbers?: boolean;
   pageSizeOptions?: number[];
+  isServerPaginated?: boolean;
+  goToPage?: (page: number) => void;
+  handlePageSizeChange?: (size: number) => void;
+  firstItem?: number;
+  lastItem?: number;
+  total?: number;
 }
 
 export function DataTablePagination<TData>({
@@ -23,16 +29,28 @@ export function DataTablePagination<TData>({
   showTotalCount = true,
   showPageNumbers = false,
   pageSizeOptions = [10, 25, 50, 100],
+  isServerPaginated = false,
+  goToPage,
+  handlePageSizeChange,
+  firstItem,
+  lastItem,
+  total,
 }: DataTablePaginationProps<TData>) {
+  const currentPage = table.getState().pagination.pageIndex + 1;
+  const pageCount = table.getPageCount();
+  const pageSize = table.getState().pagination.pageSize;
+
   return (
     <div className="flex items-center justify-between px-2">
       <div className="flex-1 text-sm text-muted-foreground">
         {showSelectedCount && (
           <>{table.getFilteredSelectedRowModel().rows.length} de </>
         )}
-        {showTotalCount && (
+        {showTotalCount && isServerPaginated && total !== undefined ? (
+          <>{firstItem}-{lastItem} de {total} fila(s)</>
+        ) : showTotalCount ? (
           <>{table.getFilteredRowModel().rows.length} fila(s)</>
-        )}
+        ) : null}
       </div>
       <div className="flex items-center space-x-6 lg:space-x-8">
         {/* Selector de items por página */}
@@ -40,7 +58,14 @@ export function DataTablePagination<TData>({
           <span className="text-sm text-muted-foreground">Mostrar:</span>
           <select
             value={table.getState().pagination.pageSize}
-            onChange={(e) => table.setPageSize(Number(e.target.value))}
+            onChange={(e) => {
+              const size = Number(e.target.value);
+              if (isServerPaginated && handlePageSizeChange) {
+                handlePageSizeChange(size);
+              } else {
+                table.setPageSize(size);
+              }
+            }}
             className="border rounded px-2 py-1 text-sm"
           >
             {pageSizeOptions.map((size) => (
@@ -56,7 +81,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             className="hidden h-8 w-8 p-0 lg:flex"
-            onClick={() => table.setPageIndex(0)}
+            onClick={() => isServerPaginated && goToPage ? goToPage(1) : table.setPageIndex(0)}
             disabled={!table.getCanPreviousPage()}
           >
             <ChevronsLeft className="h-4 w-4" />
@@ -64,7 +89,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             className="h-8 w-8 p-0"
-            onClick={() => table.previousPage()}
+            onClick={() => isServerPaginated && goToPage ? goToPage(currentPage - 1) : table.previousPage()}
             disabled={!table.getCanPreviousPage()}
           >
             <ChevronLeft className="h-4 w-4" />
@@ -74,7 +99,7 @@ export function DataTablePagination<TData>({
           {showPageNumbers && (
             <div className="flex items-center gap-1">
               <span className="text-sm text-muted-foreground">
-                Página {table.getState().pagination.pageIndex + 1} de {table.getPageCount()}
+                Página {currentPage} de {pageCount}
               </span>
             </div>
           )}
@@ -82,7 +107,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             className="h-8 w-8 p-0"
-            onClick={() => table.nextPage()}
+            onClick={() => isServerPaginated && goToPage ? goToPage(currentPage + 1) : table.nextPage()}
             disabled={!table.getCanNextPage()}
           >
             <ChevronRight className="h-4 w-4" />
@@ -90,7 +115,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             className="hidden h-8 w-8 p-0 lg:flex"
-            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+            onClick={() => isServerPaginated && goToPage ? goToPage(pageCount) : table.setPageIndex(table.getPageCount() - 1)}
             disabled={!table.getCanNextPage()}
           >
             <ChevronsRight className="h-4 w-4" />

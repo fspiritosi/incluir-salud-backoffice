@@ -38,10 +38,18 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Input as SearchInput } from "@/components/ui/input";
 
+interface ServerPaginationInfo {
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 type PrestacionesFilters = {
   fechaDesde: string;
   fechaHasta: string;
   pacienteIds: string[];
+  prestadorIds: string[];
+  estados: string[];
 };
 
 type CheckedState = boolean | 'indeterminate';
@@ -57,6 +65,8 @@ export type PrestacionRow = {
   cronico?: boolean | null;
   sentido_transporte?: string | null;
   user_id?: string | null;
+  completed_at?: string | null;
+  centros_asignados?: { id: string; nombre: string }[];
   prestador?: {
     id: string;
     nombre: string;
@@ -74,12 +84,15 @@ export type PrestacionRow = {
 type PrestacionesTableProps = {
   data: PrestacionRow[];
   filters?: PrestacionesFilters;
+  pagination?: ServerPaginationInfo;
+  allPrestadores?: { id: string; nombre: string; apellido: string; documento?: string }[];
+  allPacientes?: { id: string; nombre: string; apellido: string; documento: string }[];
 };
 
 const normalizeStringArray = (values: string[] = []) =>
   Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
-export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => {
+export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = [], allPacientes = [] }: PrestacionesTableProps) => {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -87,6 +100,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
   const canWritePrestaciones = canCreateOrEditPrestacion(roles);
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
+  const [isPaginationPending, startPaginationTransition] = useTransition();
+  const isServerPaginated = Boolean(pagination);
+  const totalPages = pagination ? Math.max(1, Math.ceil(pagination.total / pagination.pageSize || 1)) : 1;
 
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -112,9 +128,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
   const [tipoFilterSearch, setTipoFilterSearch] = useState('');
   const [pacienteFilterSearch, setPacienteFilterSearch] = useState('');
   const [prestadorFilterSearch, setPrestadorFilterSearch] = useState('');
-  const [prestadorSelected, setPrestadorSelected] = useState<string[]>([]);
+  const [prestadorSelected, setPrestadorSelected] = useState<string[]>(normalizeStringArray(filters?.prestadorIds));
   const [estadoFilterSearch, setEstadoFilterSearch] = useState('');
-  const [estadoSelected, setEstadoSelected] = useState<string[]>([]);
+  const [estadoSelected, setEstadoSelected] = useState<string[]>(normalizeStringArray(filters?.estados));
   const [diaFilterSearch, setDiaFilterSearch] = useState('');
 
   const enhancedData = useMemo(() => {
@@ -145,6 +161,11 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
   }, [estadoFilterSearch]);
 
   const pacientesOptions = useMemo(() => {
+    if (allPacientes.length > 0) {
+      return allPacientes
+        .map(p => ({ id: p.id, label: `${p.apellido}, ${p.nombre}` }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    }
     const map = new Map<string, string>();
     enhancedData.forEach((item) => {
       if (item.paciente?.id) {
@@ -155,7 +176,7 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     return Array.from(map.entries())
       .map(([id, label]) => ({ id, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [enhancedData]);
+  }, [allPacientes, enhancedData]);
 
   const prestadoresOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -277,6 +298,26 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       },
     },
     {
+      accessorKey: "completed_at",
+      header: "Validación",
+      meta: { label: "Fecha de validación" },
+      cell: ({ row }) => {
+        const value = row.getValue("completed_at") as string | null;
+        if (!value) {
+          return <span className="text-muted-foreground">-</span>;
+        }
+        const date = new Date(value);
+        const time = date.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+        const dateLabel = date.toLocaleDateString("es-AR");
+        return (
+          <div className="flex flex-col leading-tight">
+            <span>{time} hs</span>
+            <span className="text-xs text-muted-foreground">{dateLabel}</span>
+          </div>
+        );
+      },
+    },
+    {
       accessorKey: "cronico",
       header: () => {
         const cronicas = data.filter(item => item.cronico).length;
@@ -333,6 +374,30 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
         if (!paciente?.id) return false;
         return values.includes(paciente.id);
       },
+    },
+    {
+      accessorKey: "centros_asignados",
+      header: "Centro asignado",
+      cell: ({ row }) => {
+        const centros = (row.getValue("centros_asignados") as { id: string; nombre: string }[]) || [];
+        if (!centros.length) {
+          return (
+            <Badge variant="outline" className="bg-slate-100 text-slate-700 border-slate-200">
+              Sin asignar
+            </Badge>
+          );
+        }
+        return (
+          <div className="flex flex-wrap gap-1">
+            {centros.map((centro) => (
+              <Badge key={centro.id} variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                {centro.nombre}
+              </Badge>
+            ))}
+          </div>
+        );
+      },
+      enableSorting: false,
     },
     {
       id: "paciente_documento",
@@ -429,8 +494,7 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
   ];
 
   const formatLocalTimestamp = (date: Date) => {
-    const adjusted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    return adjusted.toISOString().slice(0, 19);
+    return date.toISOString();
   };
 
   const table = useReactTable({
@@ -448,6 +512,8 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     onColumnFiltersChange: setColumnFilters,
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
+    manualPagination: isServerPaginated,
+    pageCount: isServerPaginated ? totalPages : undefined,
     state: {
       sorting,
       columnFilters,
@@ -456,10 +522,49 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     },
     initialState: {
       pagination: {
-        pageSize: 10,
+        pageSize: isServerPaginated ? (pagination?.pageSize || 25) : 25,
       },
     },
   });
+
+  useEffect(() => {
+    if (!isServerPaginated) return;
+    table.setPageIndex(Math.max(0, (pagination?.page ?? 1) - 1));
+    table.setPageSize(pagination?.pageSize || 25);
+  }, [isServerPaginated, pagination?.page, pagination?.pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const updateQueryParams = (next: { page?: number; pageSize?: number }) => {
+    const current = new URLSearchParams(searchParams?.toString() ?? "");
+    if (next.page !== undefined) current.set("page", String(next.page));
+    if (next.pageSize !== undefined) current.set("pageSize", String(next.pageSize));
+    try {
+      const saved = localStorage.getItem("prestaciones_filters");
+      const parsed = saved ? JSON.parse(saved) : {};
+      localStorage.setItem("prestaciones_filters", JSON.stringify({
+        ...parsed,
+        page: next.page ?? parsed.page ?? 1,
+        pageSize: next.pageSize ?? parsed.pageSize ?? 25,
+      }));
+    } catch {}
+    const query = current.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname);
+    startPaginationTransition(() => { router.refresh(); });
+  };
+
+  const goToPage = (target: number) => {
+    if (!pagination) return;
+    const safe = Math.min(Math.max(1, target), totalPages);
+    if (safe === pagination.page) return;
+    updateQueryParams({ page: safe, pageSize: pagination.pageSize });
+  };
+
+  const handlePageSizeChange = (size: number) => {
+    if (!pagination || size === pagination.pageSize) return;
+    updateQueryParams({ page: 1, pageSize: size });
+  };
+
+  const firstItem = pagination && pagination.total > 0 ? (pagination.page - 1) * pagination.pageSize + 1 : 0;
+  const lastItem = pagination ? Math.min(pagination.total, pagination.page * pagination.pageSize) : 0;
 
   const selectedCount = Object.keys(rowSelection).length;
   const selectedRows = table.getRowModel().rows
@@ -673,13 +778,12 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
   };
 
   const applyFiltersToQueryParams = useCallback(
-    (next: { fechaDesde?: string; fechaHasta?: string; pacienteIds?: string[] }) => {
+    (next: { fechaDesde?: string; fechaHasta?: string; pacienteIds?: string[]; prestadorIds?: string[]; estados?: string[] }) => {
       const params = new URLSearchParams(searchParams?.toString() ?? "");
       const setArrayParam = (key: string, values: string[] = []) => {
         params.delete(key);
         values.forEach((value) => params.append(key, value));
       };
-
       const setOptional = (key: string, value?: string) => {
         if (value?.trim()) params.set(key, value.trim());
         else params.delete(key);
@@ -688,6 +792,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       setOptional("fechaDesde", next.fechaDesde ?? "");
       setOptional("fechaHasta", next.fechaHasta ?? "");
       setArrayParam("pacienteIds", normalizeStringArray(next.pacienteIds));
+      setArrayParam("prestadorIds", normalizeStringArray(next.prestadorIds));
+      setArrayParam("estados", normalizeStringArray(next.estados));
+      params.set("page", "1");
 
       try {
         localStorage.setItem(
@@ -696,6 +803,10 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
             fechaDesde: next.fechaDesde ?? "",
             fechaHasta: next.fechaHasta ?? "",
             pacienteIds: normalizeStringArray(next.pacienteIds),
+            prestadorIds: normalizeStringArray(next.prestadorIds),
+            estados: normalizeStringArray(next.estados),
+            page: 1,
+            pageSize: pagination?.pageSize ?? 25,
           })
         );
       } catch {}
@@ -711,21 +822,27 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     const hasFilterParams =
       searchParams?.has("fechaDesde") ||
       searchParams?.has("fechaHasta") ||
-      searchParams?.has("pacienteIds");
+      searchParams?.has("pacienteIds") ||
+      searchParams?.has("prestadorIds") ||
+      searchParams?.has("estados") ||
+      searchParams?.has("page") ||
+      searchParams?.has("pageSize");
     if (hasFilterParams) return;
     try {
       const saved = localStorage.getItem("prestaciones_filters");
       if (!saved) return;
       const parsed = JSON.parse(saved);
-      const hasAny =
-        parsed.fechaDesde || parsed.fechaHasta || parsed.pacienteIds?.length;
+      const hasAny = parsed.fechaDesde || parsed.fechaHasta || parsed.pacienteIds?.length ||
+        parsed.prestadorIds?.length || parsed.estados?.length || parsed.page > 1 || (parsed.pageSize && parsed.pageSize !== 25);
       if (!hasAny) return;
       const p = new URLSearchParams();
       if (parsed.fechaDesde) p.set("fechaDesde", parsed.fechaDesde);
       if (parsed.fechaHasta) p.set("fechaHasta", parsed.fechaHasta);
-      (parsed.pacienteIds || []).forEach((id: string) =>
-        p.append("pacienteIds", id)
-      );
+      (parsed.pacienteIds || []).forEach((id: string) => p.append("pacienteIds", id));
+      (parsed.prestadorIds || []).forEach((id: string) => p.append("prestadorIds", id));
+      (parsed.estados || []).forEach((e: string) => p.append("estados", e));
+      if (parsed.page && parsed.page > 1) p.set("page", String(parsed.page));
+      if (parsed.pageSize && parsed.pageSize !== 25) p.set("pageSize", String(parsed.pageSize));
       router.replace(`${pathname}?${p.toString()}`);
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -735,7 +852,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     setFechaDesde(filters?.fechaDesde ?? "");
     setFechaHasta(filters?.fechaHasta ?? "");
     setPacienteSelected(normalizeStringArray(filters?.pacienteIds));
-  }, [filters?.fechaDesde, filters?.fechaHasta, filters?.pacienteIds]);
+    setPrestadorSelected(normalizeStringArray(filters?.prestadorIds));
+    setEstadoSelected(normalizeStringArray(filters?.estados));
+  }, [filters?.fechaDesde, filters?.fechaHasta, filters?.pacienteIds, filters?.prestadorIds, filters?.estados]);
 
   const applyDateFilters = () => {
     if (
@@ -748,6 +867,8 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       fechaDesde,
       fechaHasta,
       pacienteIds: pacienteSelected,
+      prestadorIds: prestadorSelected,
+      estados: estadoSelected,
     });
   };
 
@@ -759,6 +880,8 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       fechaDesde: "",
       fechaHasta: "",
       pacienteIds: pacienteSelected,
+      prestadorIds: prestadorSelected,
+      estados: estadoSelected,
     });
   };
 
@@ -768,6 +891,8 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       fechaDesde,
       fechaHasta,
       pacienteIds: pacienteSelected,
+      prestadorIds: prestadorSelected,
+      estados: estadoSelected,
     });
   };
 
@@ -778,6 +903,8 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       fechaDesde,
       fechaHasta,
       pacienteIds: [],
+      prestadorIds: prestadorSelected,
+      estados: estadoSelected,
     });
   };
 
@@ -800,17 +927,25 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
             {table
               .getAllColumns()
               .filter((column) => column.getCanHide())
-              .map((column) => (
-                <DropdownMenuCheckboxItem
-                  key={column.id}
-                  className="capitalize max-w-[200px] truncate"
-                  checked={column.getIsVisible()}
-                  onCheckedChange={(value) => column.toggleVisibility(!!value)}
-                  title={column.columnDef.header?.toString() || column.id}
-                >
-                  {column.columnDef.header?.toString() || column.id}
-                </DropdownMenuCheckboxItem>
-              ))}
+              .map((column) => {
+                const headerValue = column.columnDef.header;
+                const labelFromHeader = typeof headerValue === "string"
+                  ? headerValue
+                  : undefined;
+                const metaLabel = (column.columnDef.meta as { label?: string } | undefined)?.label;
+                const text = metaLabel || labelFromHeader || column.id;
+                return (
+                  <DropdownMenuCheckboxItem
+                    key={column.id}
+                    className="max-w-[200px] truncate"
+                    checked={column.getIsVisible()}
+                    onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                    title={text}
+                  >
+                    {text}
+                  </DropdownMenuCheckboxItem>
+                );
+              })}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -925,26 +1060,18 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
             table.getColumn("paciente_documento")?.setFilterValue(event.target.value)
           }
         />
-        <DropdownMenu
-          onOpenChange={(open) => {
-            if (!open) return;
-            const current = ((table.getColumn("prestador")?.getFilterValue() as string[]) || []);
-            setPrestadorSelected(normalizeStringArray(current));
-          }}
-        >
+        <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="w-[180px] justify-between">
               <span className="truncate text-left">
                 {(() => {
-                  const selected = prestadorSelected.length
-                    ? prestadorSelected
-                    : ((table.getColumn("prestador")?.getFilterValue() as string[]) || []);
-                  if (!selected?.length) return "Prestadores...";
-                  if (selected.length === 1) {
-                    const option = prestadoresOptions.find(opt => opt.id === selected[0]);
-                    return option?.label || "1 seleccionado";
+                  if (!prestadorSelected.length) return "Prestadores...";
+                  if (prestadorSelected.length === 1) {
+                    const p = allPrestadores.find(opt => opt.id === prestadorSelected[0]);
+                    const label = p ? `${p.apellido} ${p.nombre}`.trim() : "1 seleccionado";
+                    return label || "1 seleccionado";
                   }
-                  return `${selected.length} seleccionados`;
+                  return `${prestadorSelected.length} seleccionados`;
                 })()}
               </span>
               <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
@@ -958,7 +1085,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
               className="mb-2"
             />
             <div className="max-h-[320px] overflow-y-auto space-y-2">
-              {prestadoresOptions.filter(opt => opt.label.toLowerCase().includes(prestadorFilterSearch.toLowerCase().trim()))
+              {allPrestadores
+                .map(p => ({ id: p.id, label: `${p.apellido ?? ''} ${p.nombre ?? ''}`.trim() || p.id }))
+                .filter(opt => opt.label.toLowerCase().includes(prestadorFilterSearch.toLowerCase().trim()))
                 .map((option) => {
                   const isChecked = prestadorSelected.includes(option.id);
                   return (
@@ -978,7 +1107,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
                     </label>
                   );
                 })}
-              {prestadoresOptions.filter(opt => opt.label.toLowerCase().includes(prestadorFilterSearch.toLowerCase().trim())).length === 0 && (
+              {allPrestadores.filter(p =>
+                `${p.apellido ?? ''} ${p.nombre ?? ''}`.trim().toLowerCase().includes(prestadorFilterSearch.toLowerCase().trim())
+              ).length === 0 && (
                 <p className="text-sm text-muted-foreground">Sin resultados</p>
               )}
             </div>
@@ -988,9 +1119,15 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
                 size="sm"
                 onClick={() => {
                   setPrestadorSelected([]);
-                  table.getColumn("prestador")?.setFilterValue(undefined);
+                  applyFiltersToQueryParams({
+                    fechaDesde,
+                    fechaHasta,
+                    pacienteIds: pacienteSelected,
+                    prestadorIds: [],
+                    estados: estadoSelected,
+                  });
                 }}
-                disabled={prestadorSelected.length === 0}
+                disabled={prestadorSelected.length === 0 && !filters?.prestadorIds?.length}
               >
                 Limpiar
               </Button>
@@ -998,12 +1135,17 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
                 variant="default"
                 size="sm"
                 onClick={() => {
-                  const next = normalizeStringArray(prestadorSelected);
-                  table.getColumn("prestador")?.setFilterValue(next.length ? next : undefined);
+                  applyFiltersToQueryParams({
+                    fechaDesde,
+                    fechaHasta,
+                    pacienteIds: pacienteSelected,
+                    prestadorIds: prestadorSelected,
+                    estados: estadoSelected,
+                  });
                 }}
                 disabled={arraysEqual(
                   normalizeStringArray(prestadorSelected),
-                  normalizeStringArray((table.getColumn("prestador")?.getFilterValue() as string[]) || [])
+                  normalizeStringArray(filters?.prestadorIds || [])
                 )}
               >
                 Aplicar
@@ -1011,26 +1153,16 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
-        <DropdownMenu
-          onOpenChange={(open) => {
-            if (!open) return;
-            const current = ((table.getColumn("estado")?.getFilterValue() as string[]) || []);
-            setEstadoSelected(normalizeStringArray(current));
-          }}
-        >
+        <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="w-[160px] justify-between">
               <span className="truncate text-left">
                 {(() => {
-                  const selected = estadoSelected.length
-                    ? estadoSelected
-                    : ((table.getColumn("estado")?.getFilterValue() as string[]) || []);
-                  if (!selected.length) return "Estado...";
-                  if (selected.length === 1) {
-                    const value = selected[0];
-                    return value.charAt(0).toUpperCase() + value.slice(1);
+                  if (!estadoSelected.length) return "Estado...";
+                  if (estadoSelected.length === 1) {
+                    return estadoSelected[0].charAt(0).toUpperCase() + estadoSelected[0].slice(1);
                   }
-                  return `${selected.length} seleccionados`;
+                  return `${estadoSelected.length} seleccionados`;
                 })()}
               </span>
               <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
@@ -1073,9 +1205,15 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
                 size="sm"
                 onClick={() => {
                   setEstadoSelected([]);
-                  table.getColumn("estado")?.setFilterValue(undefined);
+                  applyFiltersToQueryParams({
+                    fechaDesde,
+                    fechaHasta,
+                    pacienteIds: pacienteSelected,
+                    prestadorIds: prestadorSelected,
+                    estados: [],
+                  });
                 }}
-                disabled={estadoSelected.length === 0}
+                disabled={estadoSelected.length === 0 && !filters?.estados?.length}
               >
                 Limpiar
               </Button>
@@ -1083,12 +1221,17 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
                 variant="default"
                 size="sm"
                 onClick={() => {
-                  const next = normalizeStringArray(estadoSelected);
-                  table.getColumn("estado")?.setFilterValue(next.length ? next : undefined);
+                  applyFiltersToQueryParams({
+                    fechaDesde,
+                    fechaHasta,
+                    pacienteIds: pacienteSelected,
+                    prestadorIds: prestadorSelected,
+                    estados: estadoSelected,
+                  });
                 }}
                 disabled={arraysEqual(
                   normalizeStringArray(estadoSelected),
-                  normalizeStringArray((table.getColumn("estado")?.getFilterValue() as string[]) || [])
+                  normalizeStringArray(filters?.estados || [])
                 )}
               >
                 Aplicar
@@ -1100,11 +1243,17 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
 
       <DataTable table={table} isLoading={loading} />
       
-      <DataTablePagination 
-        table={table} 
+      <DataTablePagination
+        table={table}
         showSelectedCount={true}
         showPageNumbers={true}
-        pageSizeOptions={[10, 25, 50, 100]}
+        pageSizeOptions={[25, 50, 100, 250]}
+        isServerPaginated={isServerPaginated}
+        goToPage={isServerPaginated ? goToPage : undefined}
+        handlePageSizeChange={isServerPaginated ? handlePageSizeChange : undefined}
+        firstItem={isServerPaginated ? firstItem : undefined}
+        lastItem={isServerPaginated ? lastItem : undefined}
+        total={isServerPaginated ? pagination?.total : undefined}
       />
 
       {selectedCount > 0 && (
