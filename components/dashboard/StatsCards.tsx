@@ -421,8 +421,8 @@ export function StatsCards({ initialStats }: { initialStats: DashboardStats }) {
       </div>
 
       <Dialog open={!!selectedCard} onOpenChange={open => !open && setActiveCard(null)}>
-        <DialogContent className="max-w-6xl w-[95vw] max-h-[90vh] overflow-hidden p-0">
-          <div className="flex h-full max-h-[90vh] flex-col">
+        <DialogContent className="max-w-6xl w-[95vw] max-h-[90vh] p-0">
+          <div className="flex h-full max-h-[90vh] flex-col overflow-hidden">
             <div className="px-6 pt-6 pb-4">
               <DialogHeader>
                 <DialogTitle>{selectedCard?.label}</DialogTitle>
@@ -434,15 +434,15 @@ export function StatsCards({ initialStats }: { initialStats: DashboardStats }) {
               </DialogHeader>
             </div>
 
-            <div className="flex-1 min-h-0 px-6">
-              <div className="max-h-[60vh] overflow-auto rounded-md border">
+            <div className="flex-1 min-h-0 px-6 pb-4">
+              <div className="h-full overflow-auto rounded-md border">
                 <div className="min-w-[1000px]">
                   <DataTable table={detailTable} />
                 </div>
               </div>
             </div>
 
-            <div className="shrink-0 px-6 py-4 space-y-4">
+            <div className="shrink-0 px-6 py-4 space-y-4 border-t bg-background">
               <DataTablePagination
                 table={detailTable}
                 showSelectedCount={false}

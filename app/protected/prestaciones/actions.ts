@@ -235,6 +235,26 @@ const ESPECIALIDAD_MAP: Record<string, string> = {
   'Transporte': 'transporte',
 };
 
+const normalizeEspecialidadKey = (value?: string | null) =>
+  (value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "_");
+
+const getEspecialidadKeyForTipo = (tipo: string) => {
+  const mapped = ESPECIALIDAD_MAP[tipo];
+  return normalizeEspecialidadKey(mapped ?? tipo);
+};
+
+type PrestadorProfile = {
+  id: string;
+  activo: boolean;
+  tipo_usuario: string;
+  especialidad?: string | null;
+};
+
 export async function listPrestadoresByEspecialidad(especialidad: string) {
   const supabase = await createClient();
   const dbEspecialidad = ESPECIALIDAD_MAP[especialidad] ?? especialidad;
@@ -278,6 +298,187 @@ export async function listPrestadoresForSelect() {
     data: (data || []) as { id: string; apellido: string; nombre: string; documento?: string }[], 
     error: null 
   };
+}
+
+async function validatePrestadorForTipo(supabase: any, prestadorId: string, tipoPrestacion: string) {
+  if (!prestadorId) {
+    return { ok: false as const, error: { message: "Seleccioná un prestador" } };
+  }
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, activo, tipo_usuario, especialidad")
+    .eq("id", prestadorId)
+    .single();
+  if (error || !data) {
+    return { ok: false as const, error: { message: "No se encontró el prestador" } };
+  }
+  if (!data.activo || data.tipo_usuario !== "prestador") {
+    return { ok: false as const, error: { message: "El prestador no está activo" } };
+  }
+  const especialidadKey = getEspecialidadKeyForTipo(tipoPrestacion);
+  const prestadorEspecialidad = normalizeEspecialidadKey(data.especialidad);
+  if (especialidadKey && especialidadKey !== prestadorEspecialidad) {
+    return { ok: false as const, error: { message: `El prestador no tiene la especialidad requerida (${tipoPrestacion})` } };
+  }
+  return { ok: true as const, prestador: data as PrestadorProfile };
+}
+
+export type PacientePendienteResumen = {
+  id: string;
+  tipo_prestacion: string;
+  fecha: string;
+  centro_id: string | null;
+  sentido_transporte: string | null;
+};
+
+export async function getPrestacionesPendientesDePaciente(
+  pacienteId: string,
+  tipos?: string[],
+  fechaDesde?: string,
+  fechaHasta?: string,
+) {
+  const supabase = await createClient();
+  let q = supabase
+    .from("prestaciones")
+    .select("id, tipo_prestacion, fecha, centro_id, sentido_transporte")
+    .eq("paciente_id", pacienteId)
+    .eq("estado", "pendiente")
+    .order("fecha", { ascending: true });
+  if (tipos && tipos.length > 0) q = q.in("tipo_prestacion", tipos);
+  if (fechaDesde) q = q.gte("fecha", new Date(fechaDesde).toISOString());
+  if (fechaHasta) {
+    const end = new Date(fechaHasta);
+    end.setUTCHours(23, 59, 59, 999);
+    q = q.lte("fecha", end.toISOString());
+  }
+  const { data, error } = await q;
+  return { data: (data || []) as PacientePendienteResumen[], error };
+}
+
+export async function reasignarPrestacionesSeleccionadas(prestacionIds: string[], nuevoPrestadorId: string) {
+  const supabase = await createClient();
+
+  if (!prestacionIds.length) {
+    return { data: { successIds: [] as string[], errors: [] as { id: string; message: string }[] }, error: null } as const;
+  }
+
+  const { data: prestaciones, error: fetchError } = await supabase
+    .from("prestaciones")
+    .select("id, tipo_prestacion, fecha, estado, paciente_id, centro_id, sentido_transporte")
+    .in("id", prestacionIds);
+
+  if (fetchError || !prestaciones) {
+    return { data: null, error: fetchError ?? new Error("No se pudieron obtener las prestaciones") } as const;
+  }
+
+  const nonPendientes = prestaciones.filter((p: any) => (p.estado ?? "").toLowerCase() !== "pendiente");
+  if (nonPendientes.length > 0) {
+    return {
+      data: null,
+      error: { message: `Solo se pueden reasignar prestaciones pendientes (${nonPendientes.length} no cumplen)` },
+    } as const;
+  }
+
+  const tipos = Array.from(new Set(prestaciones.map((p: any) => p.tipo_prestacion)));
+  if (tipos.length > 1) {
+    return { data: null, error: { message: "Todas las prestaciones deben ser del mismo tipo para reasignar" } } as const;
+  }
+
+  const validation = await validatePrestadorForTipo(supabase, nuevoPrestadorId, tipos[0]);
+  if (!validation.ok) {
+    return { data: null, error: validation.error } as const;
+  }
+
+  const successIds: string[] = [];
+  const errors: { id: string; message: string }[] = [];
+
+  for (const p of prestaciones as any[]) {
+    const dup = await checkDuplicatePrestacion(supabase, {
+      paciente_id: p.paciente_id,
+      user_id: nuevoPrestadorId,
+      tipo_prestacion: p.tipo_prestacion,
+      fecha: p.fecha,
+      centro_id: p.centro_id,
+      sentido_transporte: p.sentido_transporte,
+    });
+    if (dup.exists) {
+      errors.push({ id: p.id, message: dup.message ?? "Prestación duplicada" });
+      continue;
+    }
+    const { error: updError } = await supabase
+      .from("prestaciones")
+      .update({ user_id: nuevoPrestadorId })
+      .eq("id", p.id)
+      .eq("estado", "pendiente");
+    if (updError) {
+      errors.push({ id: p.id, message: updError.message });
+    } else {
+      successIds.push(p.id);
+    }
+  }
+
+  revalidatePath("/protected/prestaciones");
+  return { data: { successIds, errors }, error: null } as const;
+}
+
+export async function reasignarPrestacionesDePaciente(
+  pacienteId: string,
+  nuevoPrestadorId: string,
+  tipos?: string[],
+  fechaDesde?: string,
+  fechaHasta?: string,
+) {
+  const supabase = await createClient();
+
+  const { data: prestaciones, error: fetchError } = await getPrestacionesPendientesDePaciente(
+    pacienteId, tipos, fechaDesde, fechaHasta,
+  );
+
+  if (fetchError) {
+    return { data: null, error: fetchError } as const;
+  }
+  if (!prestaciones || prestaciones.length === 0) {
+    return { data: { successIds: [] as string[], errors: [] as { id: string; message: string }[] }, error: null } as const;
+  }
+
+  const tiposPresentes = Array.from(new Set(prestaciones.map((p) => p.tipo_prestacion)));
+  for (const tipo of tiposPresentes) {
+    const validation = await validatePrestadorForTipo(supabase, nuevoPrestadorId, tipo);
+    if (!validation.ok) {
+      return { data: null, error: validation.error } as const;
+    }
+  }
+
+  const successIds: string[] = [];
+  const errors: { id: string; message: string }[] = [];
+
+  for (const p of prestaciones) {
+    const dup = await checkDuplicatePrestacion(supabase, {
+      paciente_id: pacienteId,
+      user_id: nuevoPrestadorId,
+      tipo_prestacion: p.tipo_prestacion,
+      fecha: p.fecha,
+      centro_id: p.centro_id,
+      sentido_transporte: p.sentido_transporte,
+    });
+    if (dup.exists) {
+      errors.push({ id: p.id, message: dup.message ?? "Prestación duplicada" });
+      continue;
+    }
+    const { error: updError } = await supabase
+      .from("prestaciones")
+      .update({ user_id: nuevoPrestadorId })
+      .eq("id", p.id)
+      .eq("estado", "pendiente");
+    if (updError) {
+      errors.push({ id: p.id, message: updError.message });
+    } else {
+      successIds.push(p.id);
+    }
+  }
+
+  revalidatePath("/protected/prestaciones");
+  return { data: { successIds, errors }, error: null } as const;
 }
 
 type ListPrestacionesParams = {
@@ -354,7 +555,7 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
 
   const dataQuery = applyFilters(
     supabase.from("prestaciones")
-      .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico, sentido_transporte, completed_at")
+      .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico, sentido_transporte, completed_at, centro_id")
       .order("fecha", { ascending: false })
   ).range(offset, offset + pageSize - 1);
 
@@ -362,7 +563,7 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
     countQuery,
     dataQuery,
   ]);
-  const prestaciones = rawPrestaciones as Array<{ id: string; tipo_prestacion: string; fecha: string; estado: string | null; monto: number | null; user_id: string | null; paciente_id: string | null; cronico: boolean | null; sentido_transporte: string | null; completed_at: string | null; }> | null;
+  const prestaciones = rawPrestaciones as Array<{ id: string; tipo_prestacion: string; fecha: string; estado: string | null; monto: number | null; user_id: string | null; paciente_id: string | null; cronico: boolean | null; sentido_transporte: string | null; completed_at: string | null; centro_id: string | null; }> | null;
 
   if (error) {
     console.error("Error listando prestaciones:", error);
@@ -433,6 +634,7 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
     cronico: p.cronico,
     sentido_transporte: p.sentido_transporte ?? null,
     completed_at: p.completed_at ?? null,
+    centro_id: p.centro_id ?? null,
     paciente: p.paciente_id ? pacientesMap.get(p.paciente_id) || null : null,
     prestador: p.user_id ? prestadoresMap.get(p.user_id) || null : null,
     centros_asignados: p.paciente_id ? pacienteCentrosMap.get(p.paciente_id) ?? [] : [],
@@ -449,6 +651,7 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
       completed_at?: string | null;
       user_id?: string | null;
       centros_asignados?: { id: string; nombre: string }[];
+      centro_id?: string | null;
       paciente: { id: string; nombre: string; apellido: string; documento: string } | null;
       prestador: { id: string; nombre: string; apellido: string; documento?: string } | null;
     }> | null,
@@ -1006,6 +1209,16 @@ export async function cancelPrestacionAction(formData: FormData): Promise<void> 
   await cancelPrestacion(id);
 }
 
+export async function completePrestacion(id: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('prestaciones')
+    .update({ estado: 'completada', completed_at: new Date().toISOString() })
+    .eq('id', id).neq('estado', 'completada').select('id').single();
+  if (!error) revalidatePath('/protected/prestaciones');
+  return { data, error } as const;
+}
+
 // Obtener pacientes de un centro para crear prestaciones masivas
 export async function getPacientesDeCentro(centroId: string) {
   const supabase = await createClient();
@@ -1195,4 +1408,35 @@ export async function listPrestadoresDePrestaciones() {
   const sorted = ((data || []) as { id: string; nombre: string; apellido: string; documento?: string }[])
     .sort((a, b) => (a.apellido ?? "").localeCompare(b.apellido ?? ""));
   return { data: sorted };
+}
+
+export async function deletePrestacion(id: string) {
+  const supabase = await createClient();
+  const { data: ex } = await supabase.from('prestaciones').select('estado').eq('id', id).single();
+  if (ex?.estado === 'completada') return { error: { message: 'No se puede eliminar una prestación completada' } };
+  const { error } = await supabase.from('prestaciones').delete().eq('id', id);
+  if (!error) revalidatePath('/protected/prestaciones');
+  return { error };
+}
+
+export async function completePrestacionesBulk(ids: string[]) {
+  const supabase = await createClient();
+  const now = new Date().toISOString();
+  let failed = 0;
+  for (const id of ids) {
+    const { error } = await supabase.from('prestaciones').update({ estado: 'completada', completed_at: now }).eq('id', id).neq('estado', 'completada');
+    if (error) failed++;
+  }
+  revalidatePath('/protected/prestaciones');
+  return { completed: ids.length - failed, failed };
+}
+
+export async function deletePrestacionesBulk(ids: string[]) {
+  const supabase = await createClient();
+  const { data: rows } = await supabase.from('prestaciones').select('id, estado').in('id', ids);
+  const deletable = (rows || []).filter((r: any) => r.estado !== 'completada').map((r: any) => r.id);
+  if (!deletable.length) return { deleted: 0, skipped: ids.length };
+  const { error } = await supabase.from('prestaciones').delete().in('id', deletable);
+  if (!error) revalidatePath('/protected/prestaciones');
+  return { deleted: deletable.length, skipped: ids.length - deletable.length, error };
 }

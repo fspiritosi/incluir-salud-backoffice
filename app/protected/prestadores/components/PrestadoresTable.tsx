@@ -535,7 +535,7 @@ export default function PrestadoresTable({ prestadores }: { prestadores: Prestad
                       <SelectTrigger disabled={replacementCandidates.length === 0}>
                         <SelectValue placeholder="Seleccioná un prestador" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="max-h-60 overflow-y-auto">
                         {replacementCandidates.length === 0 ? (
                           <div className="px-3 py-2 text-sm text-muted-foreground">
                             No hay prestadores disponibles con esta especialidad activa.

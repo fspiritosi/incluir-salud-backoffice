@@ -17,7 +17,7 @@ import {
 } from "@tanstack/react-table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Pencil, MoreHorizontalIcon, XCircle, ChevronDown, Loader2 } from "lucide-react";
+import { Pencil, MoreHorizontalIcon, XCircle, ChevronDown, Loader2, Repeat, Users, CheckCircle2, Trash2 } from "lucide-react";
 import { DataTable } from "@/components/ui/data-table";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
@@ -26,11 +26,25 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { cancelPrestacion } from "@/app/protected/prestaciones/actions";
+import {
+  cancelPrestacion,
+  completePrestacion,
+  deletePrestacion,
+  completePrestacionesBulk,
+  deletePrestacionesBulk,
+  getPrestacionesPendientesDePaciente,
+  listPrestadoresByEspecialidad,
+  reasignarPrestacionesDePaciente,
+  reasignarPrestacionesSeleccionadas,
+  type PacientePendienteResumen,
+} from "@/app/protected/prestaciones/actions";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -67,6 +81,7 @@ export type PrestacionRow = {
   user_id?: string | null;
   completed_at?: string | null;
   centros_asignados?: { id: string; nombre: string }[];
+  centro_id?: string | null;
   prestador?: {
     id: string;
     nombre: string;
@@ -89,8 +104,141 @@ type PrestacionesTableProps = {
   allPacientes?: { id: string; nombre: string; apellido: string; documento: string }[];
 };
 
+type PrestadorOption = {
+  id: string;
+  nombre?: string | null;
+  apellido?: string | null;
+  documento?: string | null;
+};
+
 const normalizeStringArray = (values: string[] = []) =>
   Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+function RowActionsCell({ prestacion, canWrite, loading }: {
+  prestacion: PrestacionRow;
+  canWrite: boolean;
+  loading: boolean;
+}) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [isPending, startTransition] = useTransition();
+  const [openDialog, setOpenDialog] = useState<'completar' | 'cancelar' | 'eliminar' | null>(null);
+  const estado = (prestacion.estado || '').toLowerCase();
+
+  if (!canWrite || loading) {
+    return (
+      <Button size="icon" variant="outline" disabled title="No tenés permiso para editar prestaciones">
+        <Pencil className="h-4 w-4" />
+      </Button>
+    );
+  }
+
+  const esPendiente = estado === 'pendiente';
+  const esCancelada = estado === 'cancelada';
+
+  if (!esPendiente && !esCancelada) return null;
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="icon" variant="outline">
+            <MoreHorizontalIcon className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {esPendiente && (
+            <>
+              <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Acciones</DropdownMenuLabel>
+              <DropdownMenuItem asChild>
+                <Link href={`/protected/prestaciones/editar/${prestacion.id}`} className="flex items-center cursor-pointer">
+                  <Pencil className="mr-2 h-4 w-4" /> Editar
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-green-700 focus:text-green-700" onSelect={() => setOpenDialog('completar')}>
+                <CheckCircle2 className="mr-2 h-4 w-4" /> Completar
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Zona de riesgo</DropdownMenuLabel>
+              <DropdownMenuItem className="text-orange-600 focus:text-orange-600" onSelect={() => setOpenDialog('cancelar')}>
+                <XCircle className="mr-2 h-4 w-4" /> Cancelar prestación
+              </DropdownMenuItem>
+            </>
+          )}
+          <DropdownMenuItem className="text-red-600 focus:text-red-600 font-medium" onSelect={() => setOpenDialog('eliminar')}>
+            <Trash2 className="mr-2 h-4 w-4" /> Eliminar permanentemente
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog open={openDialog === 'completar'} onOpenChange={(o) => { if (!o) setOpenDialog(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Completar prestación</DialogTitle>
+            <DialogDescription>Esta acción marcará la prestación como <b>completada</b>. ¿Confirmás?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="sm:justify-end">
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => setOpenDialog(null)}>Cancelar</Button>
+              <Button type="button" className="bg-green-600 hover:bg-green-700 text-white" disabled={isPending}
+                onClick={() => startTransition(async () => {
+                  const { error } = await completePrestacion(prestacion.id);
+                  if (error) toast({ title: "Error", description: (error as any).message || "Intentalo nuevamente", variant: "destructive" });
+                  else { toast({ title: "Prestación completada" }); setOpenDialog(null); router.refresh(); }
+                })}>
+                {isPending ? "Guardando..." : "Confirmar"}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={openDialog === 'cancelar'} onOpenChange={(o) => { if (!o) setOpenDialog(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancelar prestación</DialogTitle>
+            <DialogDescription>Esta acción cambiará el estado a <b>cancelada</b>. ¿Deseás continuar?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="sm:justify-end">
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => setOpenDialog(null)}>Volver</Button>
+              <Button type="button" variant="destructive" disabled={isPending}
+                onClick={() => startTransition(async () => {
+                  const { error } = await cancelPrestacion(prestacion.id);
+                  if (error) toast({ title: "No se pudo cancelar", description: (error as any).message || "Intentalo nuevamente", variant: "destructive" });
+                  else { toast({ title: "Prestación cancelada" }); setOpenDialog(null); router.refresh(); }
+                })}>
+                {isPending ? "Cancelando..." : "Confirmar"}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={openDialog === 'eliminar'} onOpenChange={(o) => { if (!o) setOpenDialog(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar prestación</DialogTitle>
+            <DialogDescription>Esta acción <b>eliminará permanentemente</b> la prestación. ¿Deseás continuar?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="sm:justify-end">
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => setOpenDialog(null)}>Cancelar</Button>
+              <Button type="button" variant="destructive" disabled={isPending}
+                onClick={() => startTransition(async () => {
+                  const { error } = await deletePrestacion(prestacion.id);
+                  if (error) toast({ title: "No se pudo eliminar", description: (error as any).message || "Intentalo nuevamente", variant: "destructive" });
+                  else { toast({ title: "Prestación eliminada" }); setOpenDialog(null); router.refresh(); }
+                })}>
+                {isPending ? "Eliminando..." : "Eliminar"}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = [], allPacientes = [] }: PrestacionesTableProps) => {
   const router = useRouter();
@@ -125,6 +273,35 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
   const [massCancelOpen, setMassCancelOpen] = useState(false);
   const [massCancelSaving, setMassCancelSaving] = useState(false);
   const [massCancelError, setMassCancelError] = useState<string | null>(null);
+  const [massCompleteOpen, setMassCompleteOpen] = useState(false);
+  const [massCompleteSaving, setMassCompleteSaving] = useState(false);
+  const [massCompleteError, setMassCompleteError] = useState<string | null>(null);
+  const [massDeleteOpen, setMassDeleteOpen] = useState(false);
+  const [massDeleteSaving, setMassDeleteSaving] = useState(false);
+  const [massDeleteError, setMassDeleteError] = useState<string | null>(null);
+
+  // Reasignación por selección
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [reassignPrestadores, setReassignPrestadores] = useState<PrestadorOption[]>([]);
+  const [reassignPrestadorId, setReassignPrestadorId] = useState('');
+  const [reassignLoading, setReassignLoading] = useState(false);
+  const [reassignSaving, setReassignSaving] = useState(false);
+  const [reassignError, setReassignError] = useState<string | null>(null);
+  const [reassignPrestadorSearch, setReassignPrestadorSearch] = useState('');
+
+  // Reasignación por paciente
+  const [byPatientOpen, setByPatientOpen] = useState(false);
+  const [byPatientPacienteId, setByPatientPacienteId] = useState('');
+  const [byPatientPacienteSearch, setByPatientPacienteSearch] = useState('');
+  const [byPatientPrestadorId, setByPatientPrestadorId] = useState('');
+  const [byPatientPrestadores, setByPatientPrestadores] = useState<PrestadorOption[]>([]);
+  const [byPatientPrestadorSearch, setByPatientPrestadorSearch] = useState('');
+  const [byPatientPrestacionesCount, setByPatientPrestacionesCount] = useState<number | null>(null);
+  const [byPatientLoadingPrestaciones, setByPatientLoadingPrestaciones] = useState(false);
+  const [byPatientLoadingPrestadores, setByPatientLoadingPrestadores] = useState(false);
+  const [byPatientSaving, setByPatientSaving] = useState(false);
+  const [byPatientError, setByPatientError] = useState<string | null>(null);
+
   const [tipoFilterSearch, setTipoFilterSearch] = useState('');
   const [pacienteFilterSearch, setPacienteFilterSearch] = useState('');
   const [prestadorFilterSearch, setPrestadorFilterSearch] = useState('');
@@ -243,7 +420,15 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
     {
       accessorKey: "fecha",
       header: "Fecha",
-      cell: ({ row }) => new Date(row.getValue("fecha")).toLocaleDateString('es-AR'),
+      cell: ({ row }) => {
+        const d = new Date(row.getValue("fecha"));
+        return (
+          <div className="flex flex-col leading-tight">
+            <span>{d.toLocaleDateString('es-AR')}</span>
+            <span className="text-xs text-muted-foreground">{d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} hs</span>
+          </div>
+        );
+      },
       filterFn: (row, columnId, filterValues) => {
         const fecha = new Date(row.getValue(columnId));
         const [inicio, fin] = filterValues as [string, string];
@@ -411,85 +596,13 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
     {
       id: "actions",
       header: "Acciones",
-      cell: ({ row }) => {
-        const prestacion = row.original;
-        const estado = (prestacion.estado || '').toLowerCase();
-        if (!canWritePrestaciones || loading) {
-          return (
-            <Button
-              size="icon"
-              variant="outline"
-              disabled
-              title="No tenés permiso para editar prestaciones"
-              aria-disabled
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-          );
-        }
-        // Solo acciones para pendientes
-        if (estado === 'pendiente') {
-          return (
-            <div className="flex items-center gap-2">
-              <Link href={`/protected/prestaciones/editar/${prestacion.id}`} aria-label="Editar">
-                <Button size="icon" variant="outline">
-                  <Pencil className="h-4 w-4" />
-                </Button>
-              </Link>
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button size="icon" variant="destructive" aria-label="Cancelar prestación">
-                    <XCircle className="h-4 w-4" />
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Cancelar prestación</DialogTitle>
-                    <DialogDescription>
-                      Esta acción cambiará el estado a <b>cancelada</b>. ¿Deseás continuar?
-                    </DialogDescription>
-                  </DialogHeader>
-                  <DialogFooter className="sm:justify-end">
-                    <div className="flex items-center gap-2">
-                      <DialogClose asChild>
-                        <Button type="button" variant="outline">Cancelar</Button>
-                      </DialogClose>
-                      <DialogClose asChild>
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          disabled={isPending}
-                          onClick={() => {
-                            startTransition(async () => {
-                              const { error } = await cancelPrestacion(prestacion.id);
-                              if (error) {
-                                toast({
-                                  title: "No se pudo cancelar",
-                                  description: error.message || "Intentalo nuevamente",
-                                  variant: "destructive",
-                                });
-                              } else {
-                                toast({
-                                  title: "Prestación cancelada",
-                                  description: "La prestación pasó a estado cancelada.",
-                                });
-                              }
-                            });
-                          }}
-                        >
-                          {isPending ? "Cancelando..." : "Confirmar"}
-                        </Button>
-                      </DialogClose>
-                    </div>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-          );
-        }
-        // Para completadas o canceladas: sin acciones de edición/cancelación
-        return null;
-      },
+      cell: ({ row }) => (
+        <RowActionsCell
+          prestacion={row.original}
+          canWrite={canWritePrestaciones}
+          loading={loading}
+        />
+      ),
     },
   ];
 
@@ -506,7 +619,7 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
     getFilteredRowModel: getFilteredRowModel(),
     enableRowSelection: (row) => {
       const estado = (row.original.estado || '').toLowerCase();
-      return estado === 'pendiente';
+      return estado === 'pendiente' || estado === 'cancelada';
     },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
@@ -773,6 +886,162 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
         setMassCancelError('No se pudieron cancelar todas las prestaciones. Intentalo nuevamente.');
       } finally {
         setMassCancelSaving(false);
+      }
+    });
+  };
+
+  const handleMassCompleteSave = () => {
+    if (!selectedRows.length) return;
+    setMassCompleteSaving(true);
+    setMassCompleteError(null);
+    startTransition(async () => {
+      try {
+        const ids = selectedRows.map(r => r.id);
+        const result = await completePrestacionesBulk(ids);
+        toast({ title: `${result.completed} prestaciones completadas`, description: result.failed > 0 ? `${result.failed} no se pudieron completar.` : undefined });
+        setMassCompleteOpen(false);
+        setRowSelection({});
+        router.refresh();
+      } catch {
+        setMassCompleteError('No se pudieron completar todas las prestaciones. Intentalo nuevamente.');
+      } finally {
+        setMassCompleteSaving(false);
+      }
+    });
+  };
+
+  const handleMassDeleteSave = () => {
+    if (!selectedRows.length) return;
+    setMassDeleteSaving(true);
+    setMassDeleteError(null);
+    startTransition(async () => {
+      try {
+        const ids = selectedRows.map(r => r.id);
+        const result = await deletePrestacionesBulk(ids);
+        toast({ title: `${result.deleted} prestaciones eliminadas`, description: result.skipped > 0 ? `${result.skipped} omitidas (completadas).` : undefined });
+        setMassDeleteOpen(false);
+        setRowSelection({});
+        router.refresh();
+      } catch {
+        setMassDeleteError('No se pudieron eliminar todas las prestaciones. Intentalo nuevamente.');
+      } finally {
+        setMassDeleteSaving(false);
+      }
+    });
+  };
+
+  const handleOpenReassign = async () => {
+    if (!selectedRows.length) return;
+    const tipo = selectedRows[0]?.tipo_prestacion;
+    setReassignError(null);
+    setReassignPrestadorId('');
+    setReassignPrestadorSearch('');
+    setReassignLoading(true);
+    setReassignOpen(true);
+    try {
+      const { data } = await listPrestadoresByEspecialidad(tipo);
+      setReassignPrestadores(data || []);
+    } catch {
+      setReassignError('No se pudieron cargar los prestadores.');
+    } finally {
+      setReassignLoading(false);
+    }
+  };
+
+  const handleReassignSave = () => {
+    if (!reassignPrestadorId) {
+      setReassignError('Seleccioná un prestador destino.');
+      return;
+    }
+    setReassignSaving(true);
+    setReassignError(null);
+    startTransition(async () => {
+      try {
+        const ids = selectedRows.map(r => r.id);
+        const { data, error } = await reasignarPrestacionesSeleccionadas(ids, reassignPrestadorId);
+        if (error) {
+          setReassignError((error as any).message ?? 'Error al reasignar');
+          return;
+        }
+        const { successIds, errors } = data!;
+        if (errors.length > 0) {
+          toast({
+            title: `${successIds.length} reasignadas, ${errors.length} con conflicto`,
+            description: errors.map(e => e.message).join(' · '),
+            variant: 'destructive',
+          });
+        } else {
+          toast({ title: `${successIds.length} prestaciones reasignadas correctamente` });
+        }
+        setReassignOpen(false);
+        setRowSelection({});
+        router.refresh();
+      } catch {
+        setReassignError('Error inesperado al reasignar.');
+      } finally {
+        setReassignSaving(false);
+      }
+    });
+  };
+
+  const handleByPatientPacienteChange = async (pacienteId: string) => {
+    setByPatientPacienteId(pacienteId);
+    setByPatientPrestadores([]);
+    setByPatientPrestadorId('');
+    setByPatientPrestacionesCount(null);
+    setByPatientError(null);
+    if (!pacienteId) return;
+    setByPatientLoadingPrestaciones(true);
+    try {
+      const { data } = await getPrestacionesPendientesDePaciente(pacienteId);
+      setByPatientPrestacionesCount((data || []).length);
+      const tipos = Array.from(new Set((data || []).map(p => p.tipo_prestacion)));
+      if (tipos.length > 0) {
+        setByPatientLoadingPrestadores(true);
+        const { data: prests } = await listPrestadoresByEspecialidad(tipos[0]);
+        setByPatientPrestadores(prests || []);
+        setByPatientLoadingPrestadores(false);
+      }
+    } catch {
+      setByPatientError('No se pudieron cargar las prestaciones del paciente.');
+    } finally {
+      setByPatientLoadingPrestaciones(false);
+    }
+  };
+
+  const handleByPatientSave = () => {
+    if (!byPatientPacienteId || !byPatientPrestadorId) {
+      setByPatientError('Seleccioná un paciente y un prestador destino.');
+      return;
+    }
+    setByPatientSaving(true);
+    setByPatientError(null);
+    startTransition(async () => {
+      try {
+        const { data, error } = await reasignarPrestacionesDePaciente(byPatientPacienteId, byPatientPrestadorId);
+        if (error) {
+          setByPatientError((error as any).message ?? 'Error al reasignar');
+          return;
+        }
+        const { successIds, errors } = data!;
+        if (errors.length > 0) {
+          toast({
+            title: `${successIds.length} reasignadas, ${errors.length} con conflicto`,
+            description: errors.map(e => e.message).join(' · '),
+            variant: 'destructive',
+          });
+        } else {
+          toast({ title: `${successIds.length} prestaciones reasignadas correctamente` });
+        }
+        setByPatientOpen(false);
+        setByPatientPacienteId('');
+        setByPatientPrestadorId('');
+        setByPatientPrestacionesCount(null);
+        router.refresh();
+      } catch {
+        setByPatientError('Error inesperado al reasignar.');
+      } finally {
+        setByPatientSaving(false);
       }
     });
   };
@@ -1370,6 +1639,66 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
           </DialogContent>
         </Dialog>
 
+          <Button
+            variant="outline"
+            className="ml-2 bg-amber-50 text-amber-700 hover:bg-amber-100"
+            onClick={handleOpenReassign}
+          >
+            <Repeat className="mr-2 h-4 w-4" />
+            Reasignar {selectedCount} seleccionadas
+          </Button>
+
+          <Dialog open={reassignOpen} onOpenChange={setReassignOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Reasignar {selectedCount} prestaciones</DialogTitle>
+                <DialogDescription>
+                  Seleccioná el nuevo prestador. Solo se reasignan prestaciones <b>pendientes</b> del mismo tipo.
+                </DialogDescription>
+              </DialogHeader>
+              {reassignError && <p className="text-sm text-red-600">{reassignError}</p>}
+              {reassignLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando prestadores…</div>
+              ) : (
+                <div className="space-y-2">
+                  <Label>Nuevo prestador</Label>
+                  <SearchInput
+                    placeholder="Buscar por nombre…"
+                    value={reassignPrestadorSearch}
+                    onChange={e => setReassignPrestadorSearch(e.target.value)}
+                  />
+                  <div className="max-h-56 overflow-y-auto space-y-1 border rounded p-2">
+                    {reassignPrestadores
+                      .filter(p => `${p.apellido ?? ''} ${p.nombre ?? ''}`.toLowerCase().includes(reassignPrestadorSearch.toLowerCase()))
+                      .map(p => (
+                        <label key={p.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="radio"
+                            name="reassign_prestador"
+                            value={p.id}
+                            checked={reassignPrestadorId === p.id}
+                            onChange={() => setReassignPrestadorId(p.id)}
+                          />
+                          {`${p.apellido ?? ''}, ${p.nombre ?? ''}`}
+                          {p.documento ? <span className="text-xs text-muted-foreground">DNI {p.documento}</span> : null}
+                        </label>
+                      ))}
+                    {reassignPrestadores.length === 0 && <p className="text-sm text-muted-foreground">Sin prestadores disponibles para este tipo.</p>}
+                  </div>
+                </div>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setReassignOpen(false)}>Cancelar</Button>
+                <Button
+                  disabled={!reassignPrestadorId || reassignSaving || reassignLoading}
+                  onClick={handleReassignSave}
+                >
+                  {reassignSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Reasignando…</> : 'Confirmar reasignación'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           <Dialog open={massCancelOpen} onOpenChange={setMassCancelOpen}>
             <DialogTrigger asChild>
               <Button
@@ -1406,8 +1735,161 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
               </DialogFooter>
             </DialogContent>
           </Dialog>
+
+          <Dialog open={massCompleteOpen} onOpenChange={setMassCompleteOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="ml-2 text-green-700 border-green-400 hover:bg-green-50">
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                Completar {selectedCount} seleccionadas
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Completar {selectedCount} prestaciones</DialogTitle>
+                <DialogDescription>
+                  Esta acción marcará como <b>completadas</b> todas las seleccionadas. ¿Deseás continuar?
+                </DialogDescription>
+              </DialogHeader>
+              {massCompleteError && <div className="text-red-600 text-sm">{massCompleteError}</div>}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setMassCompleteOpen(false)}>Volver</Button>
+                <Button className="bg-green-600 hover:bg-green-700 text-white" disabled={massCompleteSaving} onClick={handleMassCompleteSave}>
+                  {massCompleteSaving ? 'Completando...' : 'Confirmar'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={massDeleteOpen} onOpenChange={setMassDeleteOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="ml-2 text-red-700 border-red-400 hover:bg-red-50">
+                <Trash2 className="mr-2 h-4 w-4" />
+                Eliminar {selectedCount} seleccionadas
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Eliminar {selectedCount} prestaciones</DialogTitle>
+                <DialogDescription>
+                  Esta acción <b>eliminará permanentemente</b> las prestaciones seleccionadas (las completadas serán omitidas). ¿Deseás continuar?
+                </DialogDescription>
+              </DialogHeader>
+              {massDeleteError && <div className="text-red-600 text-sm">{massDeleteError}</div>}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setMassDeleteOpen(false)}>Volver</Button>
+                <Button variant="destructive" disabled={massDeleteSaving} onClick={handleMassDeleteSave}>
+                  {massDeleteSaving ? 'Eliminando...' : 'Eliminar'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       )}
+
+      {/* Reasignar por paciente */}
+      <div className="mt-2 flex justify-end">
+        <Button
+          variant="outline"
+          className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+          onClick={() => { setByPatientOpen(true); setByPatientError(null); }}
+        >
+          <Users className="mr-2 h-4 w-4" />
+          Reasignar por paciente
+        </Button>
+      </div>
+
+      <Dialog open={byPatientOpen} onOpenChange={setByPatientOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Reasignar prestaciones por paciente</DialogTitle>
+            <DialogDescription>
+              Reasigna todas las prestaciones <b>pendientes</b> de un paciente a otro prestador.
+            </DialogDescription>
+          </DialogHeader>
+          {byPatientError && <p className="text-sm text-red-600">{byPatientError}</p>}
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <Label>Paciente</Label>
+              <SearchInput
+                placeholder="Buscar por nombre o apellido…"
+                value={byPatientPacienteSearch}
+                onChange={e => setByPatientPacienteSearch(e.target.value)}
+              />
+              <div className="max-h-44 overflow-y-auto space-y-1 border rounded p-2">
+                {allPacientes
+                  .filter(p => `${p.apellido} ${p.nombre}`.toLowerCase().includes(byPatientPacienteSearch.toLowerCase()))
+                  .map(p => (
+                    <label key={p.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="radio"
+                        name="bypatient_paciente"
+                        value={p.id}
+                        checked={byPatientPacienteId === p.id}
+                        onChange={() => handleByPatientPacienteChange(p.id)}
+                      />
+                      {`${p.apellido}, ${p.nombre}`}
+                      <span className="text-xs text-muted-foreground">DNI {p.documento}</span>
+                    </label>
+                  ))}
+                {allPacientes.length === 0 && <p className="text-sm text-muted-foreground">Sin pacientes.</p>}
+              </div>
+              {byPatientPacienteId && (
+                <p className="text-xs text-muted-foreground">
+                  {byPatientLoadingPrestaciones
+                    ? 'Cargando prestaciones…'
+                    : byPatientPrestacionesCount === null
+                    ? ''
+                    : byPatientPrestacionesCount === 0
+                    ? 'No hay prestaciones pendientes para este paciente.'
+                    : `${byPatientPrestacionesCount} prestaciones pendientes encontradas.`}
+                </p>
+              )}
+            </div>
+
+            {byPatientPrestacionesCount !== null && byPatientPrestacionesCount > 0 && (
+              <div className="space-y-1">
+                <Label>Nuevo prestador</Label>
+                <SearchInput
+                  placeholder="Buscar por nombre…"
+                  value={byPatientPrestadorSearch}
+                  onChange={e => setByPatientPrestadorSearch(e.target.value)}
+                />
+                {byPatientLoadingPrestadores ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando…</div>
+                ) : (
+                  <div className="max-h-44 overflow-y-auto space-y-1 border rounded p-2">
+                    {byPatientPrestadores
+                      .filter(p => `${p.apellido ?? ''} ${p.nombre ?? ''}`.toLowerCase().includes(byPatientPrestadorSearch.toLowerCase()))
+                      .map(p => (
+                        <label key={p.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="radio"
+                            name="bypatient_prestador"
+                            value={p.id}
+                            checked={byPatientPrestadorId === p.id}
+                            onChange={() => setByPatientPrestadorId(p.id)}
+                          />
+                          {`${p.apellido ?? ''}, ${p.nombre ?? ''}`}
+                          {p.documento ? <span className="text-xs text-muted-foreground">DNI {p.documento}</span> : null}
+                        </label>
+                      ))}
+                    {byPatientPrestadores.length === 0 && <p className="text-sm text-muted-foreground">Sin prestadores disponibles.</p>}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setByPatientOpen(false)}>Cancelar</Button>
+            <Button
+              disabled={!byPatientPacienteId || !byPatientPrestadorId || byPatientSaving}
+              onClick={handleByPatientSave}
+            >
+              {byPatientSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Reasignando…</> : 'Confirmar reasignación'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
