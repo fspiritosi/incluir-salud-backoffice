@@ -835,8 +835,7 @@ export function TransportePrestacionesTable({
   const isValidSelection = canEditSchedule || canEditCronicoOnly;
 
   const formatLocalTimestamp = (date: Date) => {
-    const adjusted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    return adjusted.toISOString().slice(0, 19);
+    return date.toISOString();
   };
 
   const resetMassEditState = () => {

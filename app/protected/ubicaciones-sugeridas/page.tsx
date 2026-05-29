@@ -1,9 +1,25 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import UbicacionesSugeridasClient from "@/components/ubicaciones-sugeridas/UbicacionesSugeridasClient";
+import UbicacionesSugeridasTable from "@/components/ubicaciones-sugeridas/UbicacionesSugeridasTable";
 import { listCentrosConUbicacionSugerida, listPacientesConUbicacionSugerida } from "@/app/protected/ubicaciones-sugeridas/actions";
 
-export default async function UbicacionesSugeridasPage() {
+type UbicacionesSugeridasPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+const toArray = (value: string | string[] | undefined) => {
+  if (!value) return [] as string[];
+  return Array.isArray(value) ? value.filter(Boolean) : [value];
+};
+
+const toSingle = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
+
+const toNumber = (value: string | string[] | undefined, defaultValue: number) => {
+  const num = Number(toSingle(value));
+  return Number.isNaN(num) || num <= 0 ? defaultValue : num;
+};
+
+export default async function UbicacionesSugeridasPage({ searchParams }: UbicacionesSugeridasPageProps) {
   const supabase = await createClient();
   const { data: claims, error: claimsError } = await supabase.auth.getClaims();
   if (claimsError || !claims?.claims) {
@@ -23,6 +39,19 @@ export default async function UbicacionesSugeridasPage() {
   if (!allowed) {
     redirect("/protected");
   }
+
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const page = toNumber(resolvedSearchParams?.page, 1);
+  const pageSize = toNumber(resolvedSearchParams?.pageSize, 25);
+  const filters = {
+    tipo: toSingle(resolvedSearchParams?.tipo) ?? "",
+    estado: toSingle(resolvedSearchParams?.estado) ?? "",
+    fechaDesde: toSingle(resolvedSearchParams?.fechaDesde) ?? "",
+    fechaHasta: toSingle(resolvedSearchParams?.fechaHasta) ?? "",
+    pacienteIds: toArray(resolvedSearchParams?.pacienteIds),
+    centroIds: toArray(resolvedSearchParams?.centroIds),
+    sugeridoPorIds: toArray(resolvedSearchParams?.sugeridoPorIds),
+  };
 
   const [{ data: pacientes, error: pacientesError }, { data: centros, error: centrosError }] = await Promise.all([
     listPacientesConUbicacionSugerida(),
@@ -45,7 +74,12 @@ export default async function UbicacionesSugeridasPage() {
         <p className="text-sm text-muted-foreground">Aprobá o rechazá ubicaciones sugeridas por prestadores.</p>
       </div>
 
-      <UbicacionesSugeridasClient pacientes={pacientes || []} centros={centros || []} />
+      <UbicacionesSugeridasTable 
+        pacientes={pacientes || []} 
+        centros={centros || []} 
+        filters={filters}
+        pagination={{ page, pageSize, total: (pacientes || []).length + (centros || []).length }}
+      />
     </div>
   );
 }

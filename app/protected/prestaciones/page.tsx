@@ -3,7 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { listPrestaciones, listPrestacionesParaReasignar, listPrestadoresByEspecialidad } from "@/app/protected/prestaciones/actions";
+import { listPrestaciones, listPrestacionesParaReasignar, listPrestadoresByEspecialidad, listPrestadoresDePrestaciones, listPacientesConPrestaciones } from "@/app/protected/prestaciones/actions";
 import { PrestacionesTable, type PrestacionRow } from "@/components/prestaciones/PrestacionesTable";
 import PrestacionesReassignTable from "@/components/prestaciones/PrestacionesReassignTable";
 
@@ -17,6 +17,11 @@ const toArray = (value: string | string[] | undefined) => {
 };
 
 const toSingle = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
+
+const toNumber = (value: string | string[] | undefined, defaultValue: number) => {
+  const num = Number(toSingle(value));
+  return Number.isNaN(num) || num <= 0 ? defaultValue : num;
+};
 
 export default async function PrestacionesPage({ searchParams }: PrestacionesPageProps) {
   const supabase = await createClient();
@@ -38,19 +43,29 @@ export default async function PrestacionesPage({ searchParams }: PrestacionesPag
   const canCreate = roles.some((r) => ["auditor", "super_admin"].includes(r));
 
   const resolvedSearchParams = searchParams ? await searchParams : {};
+  const page = toNumber(resolvedSearchParams?.page, 1);
+  const pageSize = toNumber(resolvedSearchParams?.pageSize, 25);
   const filters = {
     fechaDesde: toSingle(resolvedSearchParams?.fechaDesde) ?? "",
     fechaHasta: toSingle(resolvedSearchParams?.fechaHasta) ?? "",
     pacienteIds: toArray(resolvedSearchParams?.pacienteIds),
-  } as const;
+    prestadorIds: toArray(resolvedSearchParams?.prestadorIds),
+    estados: toArray(resolvedSearchParams?.estados),
+  };
 
-  const [{ data, error }, { data: poolData, error: poolError }] = await Promise.all([
+  const [{ data, error, pagination }, { data: poolData, error: poolError }, { data: allPrestadores }, { data: allPacientes }] = await Promise.all([
     listPrestaciones({
       fechaDesde: filters.fechaDesde,
       fechaHasta: filters.fechaHasta,
       pacienteIds: filters.pacienteIds,
+      prestadorIds: filters.prestadorIds,
+      estados: filters.estados,
+      page,
+      pageSize,
     }),
     listPrestacionesParaReasignar(),
+    listPrestadoresDePrestaciones(),
+    listPacientesConPrestaciones(),
   ]);
 
   if (error) {
@@ -118,7 +133,13 @@ export default async function PrestacionesPage({ searchParams }: PrestacionesPag
         </TabsList>
 
         <TabsContent value="todas">
-          <PrestacionesTable data={(data || []) as PrestacionRow[]} filters={filters} />
+          <PrestacionesTable
+            data={(data || []) as PrestacionRow[]}
+            filters={filters}
+            pagination={pagination}
+            allPrestadores={allPrestadores || []}
+            allPacientes={allPacientes || []}
+          />
         </TabsContent>
 
         <TabsContent value="reasignar">

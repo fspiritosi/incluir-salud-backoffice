@@ -235,19 +235,20 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
     try {
       setLoading(true);
 
-      const selectedPaciente = pacientes.find((p) => p.id === values.paciente_id);
-      let tieneUbic = selectedPaciente?.tiene_ubicacion === true;
-      if (!tieneUbic) {
-        try {
-          const res = await fetch(`/api/pacientes/search?id=${encodeURIComponent(values.paciente_id)}&limit=1`);
-          const json = await res.json();
-          const row = json?.data?.[0];
-          tieneUbic = Boolean(row?.tiene_ubicacion);
-        } catch {}
-      }
-      if (!tieneUbic) {
-        throw new Error('El paciente seleccionado no tiene geolocalización. Asignala antes de crear la prestación.');
-      }
+      // Restricción de geolocalización comentada - se permite crear prestaciones sin ubicación
+      // const selectedPaciente = pacientes.find((p) => p.id === values.paciente_id);
+      // let tieneUbic = selectedPaciente?.tiene_ubicacion === true;
+      // if (!tieneUbic) {
+      //   try {
+      //     const res = await fetch(`/api/pacientes/search?id=${encodeURIComponent(values.paciente_id)}&limit=1`);
+      //     const json = await res.json();
+      //     const row = json?.data?.[0];
+      //     tieneUbic = Boolean(row?.tiene_ubicacion);
+      //   } catch {}
+      // }
+      // if (!tieneUbic) {
+      //   throw new Error('El paciente seleccionado no tiene geolocalización. Asignala antes de crear la prestación.');
+      // }
 
       if (bulkMode) {
         if (generatedDates.length === 0) {

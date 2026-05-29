@@ -84,6 +84,8 @@ export type PacienteUbicacionSugeridaRow = {
   ubicacion_sugerida: UbicacionCoords | null;
   ubicacion_sugerida_at: string | null;
   ubicacion_sugerida_por: string | null;
+  ubicacion_sugerida_por_nombre: string | null;
+  ubicacion_sugerida_por_email: string | null;
   ubicacion_sugerida_precision_m: number | null;
 };
 
@@ -98,6 +100,8 @@ export type CentroUbicacionSugeridaRow = {
   ubicacion_sugerida: UbicacionCoords | null;
   ubicacion_sugerida_at: string | null;
   ubicacion_sugerida_por: string | null;
+  ubicacion_sugerida_por_nombre: string | null;
+  ubicacion_sugerida_por_email: string | null;
   ubicacion_sugerida_precision_m: number | null;
 };
 
@@ -116,6 +120,39 @@ function normalizeCoords(value: unknown): UbicacionCoords | null {
     return parseWKBPoint(value);
   }
   return null;
+}
+
+type SuggestedByInfo = {
+  id: string;
+  nombre: string | null;
+  apellido: string | null;
+  email: string | null;
+};
+
+async function fetchSuggestedUsersMap(admin: SupabaseClient, ids: string[]) {
+  const map = new Map<string, SuggestedByInfo>();
+  if (!ids.length) return map;
+
+  const { data, error } = await admin
+    .from("profiles")
+    .select("id, nombre, apellido, email")
+    .in("id", ids);
+
+  if (error) {
+    console.error("No se pudo cargar info de usuarios que sugirieron ubicaciones", error);
+    return map;
+  }
+
+  for (const row of data || []) {
+    map.set(row.id, {
+      id: row.id,
+      nombre: row.nombre ?? null,
+      apellido: row.apellido ?? null,
+      email: row.email ?? null,
+    });
+  }
+
+  return map;
 }
 
 export async function listPacientesConUbicacionSugerida() {
@@ -146,20 +183,30 @@ export async function listPacientesConUbicacionSugerida() {
     return { data: null, error: "No se pudo cargar la lista" };
   }
 
-  const mapped = (data || []).map((row: any) => ({
-    id: row.id,
-    nombre: row.nombre ?? null,
-    apellido: row.apellido ?? null,
-    documento: row.documento ?? null,
-    direccion_completa: row.direccion_completa ?? null,
-    ciudad: row.ciudad ?? null,
-    provincia: row.provincia ?? null,
-    ubicacion: normalizeCoords(row.ubicacion),
-    ubicacion_sugerida: normalizeCoords(row.ubicacion_sugerida),
-    ubicacion_sugerida_at: row.ubicacion_sugerida_at ?? null,
-    ubicacion_sugerida_por: row.ubicacion_sugerida_por ?? null,
-    ubicacion_sugerida_precision_m: row.ubicacion_sugerida_precision_m ?? null,
-  })) as PacienteUbicacionSugeridaRow[];
+  const suggestedByIds = (data || [])
+    .map((row: any) => row.ubicacion_sugerida_por)
+    .filter((id): id is string => !!id);
+  const suggestedByMap = await fetchSuggestedUsersMap(admin, suggestedByIds);
+
+  const mapped = (data || []).map((row: any) => {
+    const suggestedBy = row.ubicacion_sugerida_por ? suggestedByMap.get(row.ubicacion_sugerida_por) : null;
+    return {
+      id: row.id,
+      nombre: row.nombre ?? null,
+      apellido: row.apellido ?? null,
+      documento: row.documento ?? null,
+      direccion_completa: row.direccion_completa ?? null,
+      ciudad: row.ciudad ?? null,
+      provincia: row.provincia ?? null,
+      ubicacion: normalizeCoords(row.ubicacion),
+      ubicacion_sugerida: normalizeCoords(row.ubicacion_sugerida),
+      ubicacion_sugerida_at: row.ubicacion_sugerida_at ?? null,
+      ubicacion_sugerida_por: row.ubicacion_sugerida_por ?? null,
+      ubicacion_sugerida_por_nombre: suggestedBy ? `${suggestedBy.apellido}, ${suggestedBy.nombre}`.trim() : null,
+      ubicacion_sugerida_por_email: suggestedBy?.email ?? null,
+      ubicacion_sugerida_precision_m: row.ubicacion_sugerida_precision_m ?? null,
+    };
+  }) as PacienteUbicacionSugeridaRow[];
 
   return { data: mapped, error: null as string | null };
 }
@@ -192,19 +239,29 @@ export async function listCentrosConUbicacionSugerida() {
     return { data: null, error: "No se pudo cargar la lista" };
   }
 
-  const mapped = (data || []).map((row: any) => ({
-    id: row.id,
-    nombre: row.nombre ?? null,
-    tipo: row.tipo ?? null,
-    direccion_completa: row.direccion_completa ?? null,
-    ciudad: row.ciudad ?? null,
-    provincia: row.provincia ?? null,
-    ubicacion: normalizeCoords(row.ubicacion),
-    ubicacion_sugerida: normalizeCoords(row.ubicacion_sugerida),
-    ubicacion_sugerida_at: row.ubicacion_sugerida_at ?? null,
-    ubicacion_sugerida_por: row.ubicacion_sugerida_por ?? null,
-    ubicacion_sugerida_precision_m: row.ubicacion_sugerida_precision_m ?? null,
-  })) as CentroUbicacionSugeridaRow[];
+  const suggestedByIds = (data || [])
+    .map((row: any) => row.ubicacion_sugerida_por)
+    .filter((id): id is string => !!id);
+  const suggestedByMap = await fetchSuggestedUsersMap(admin, suggestedByIds);
+
+  const mapped = (data || []).map((row: any) => {
+    const suggestedBy = row.ubicacion_sugerida_por ? suggestedByMap.get(row.ubicacion_sugerida_por) : null;
+    return {
+      id: row.id,
+      nombre: row.nombre ?? null,
+      tipo: row.tipo ?? null,
+      direccion_completa: row.direccion_completa ?? null,
+      ciudad: row.ciudad ?? null,
+      provincia: row.provincia ?? null,
+      ubicacion: normalizeCoords(row.ubicacion),
+      ubicacion_sugerida: normalizeCoords(row.ubicacion_sugerida),
+      ubicacion_sugerida_at: row.ubicacion_sugerida_at ?? null,
+      ubicacion_sugerida_por: row.ubicacion_sugerida_por ?? null,
+      ubicacion_sugerida_por_nombre: suggestedBy ? `${suggestedBy.apellido}, ${suggestedBy.nombre}`.trim() : null,
+      ubicacion_sugerida_por_email: suggestedBy?.email ?? null,
+      ubicacion_sugerida_precision_m: row.ubicacion_sugerida_precision_m ?? null,
+    };
+  }) as CentroUbicacionSugeridaRow[];
 
   return { data: mapped, error: null as string | null };
 }

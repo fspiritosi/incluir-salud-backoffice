@@ -457,3 +457,53 @@ export async function disablePrestadorConReasignacion({
     error: null,
   };
 }
+
+export type DeviceChangeRow = {
+  id: string;
+  user_id: string;
+  prestador_nombre: string;
+  prestador_apellido: string;
+  old_device_id: string | null;
+  new_device_id: string | null;
+  status: string;
+  created_at: string;
+};
+
+export async function listDeviceChanges(): Promise<{ data: DeviceChangeRow[] | null; error: any }> {
+  const supabase = await createClient();
+  
+  const { data, error } = await supabase
+    .from("device_changes")
+    .select(`
+      id,
+      user_id,
+      old_device_id,
+      new_device_id,
+      status,
+      created_at,
+      user:profiles(nombre, apellido)
+    `)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error('Error listando cambios de dispositivos:', error);
+    return { data: null, error };
+  }
+
+  if (!data || data.length === 0) {
+    return { data: [], error: null };
+  }
+
+  const mapped = data.map((row: any) => ({
+    id: row.id,
+    user_id: row.user_id,
+    prestador_nombre: row.user?.nombre || "",
+    prestador_apellido: row.user?.apellido || "",
+    old_device_id: row.old_device_id,
+    new_device_id: row.new_device_id,
+    status: row.status,
+    created_at: row.created_at,
+  }));
+
+  return { data: mapped, error: null };
+}
