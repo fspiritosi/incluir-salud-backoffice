@@ -89,6 +89,7 @@ export default function UbicacionesSugeridasClient({
             <TableRow>
               <TableHead>Beneficiario</TableHead>
               <TableHead>DNI</TableHead>
+              <TableHead>Sugerida por</TableHead>
               <TableHead>Fecha</TableHead>
               <TableHead>Ubicación sugerida</TableHead>
               <TableHead>Ubicación actual</TableHead>
@@ -99,7 +100,7 @@ export default function UbicacionesSugeridasClient({
           <TableBody>
             {pacientesSorted.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="text-sm text-muted-foreground">
                   No hay ubicaciones sugeridas pendientes.
                 </TableCell>
               </TableRow>
@@ -113,6 +114,10 @@ export default function UbicacionesSugeridasClient({
                     </div>
                   </TableCell>
                   <TableCell>{row.documento || "—"}</TableCell>
+                  <TableCell>
+                    <div className="text-sm">{row.ubicacion_sugerida_por_nombre || "—"}</div>
+                    <div className="text-xs text-muted-foreground">{row.ubicacion_sugerida_por_email || ""}</div>
+                  </TableCell>
                   <TableCell>{formatFecha(row.ubicacion_sugerida_at)}</TableCell>
                   <TableCell>{formatCoords(row.ubicacion_sugerida)}</TableCell>
                   <TableCell>{formatCoords(row.ubicacion)}</TableCell>
@@ -158,6 +163,7 @@ export default function UbicacionesSugeridasClient({
             <TableRow>
               <TableHead>Centro</TableHead>
               <TableHead>Tipo</TableHead>
+              <TableHead>Sugerida por</TableHead>
               <TableHead>Fecha</TableHead>
               <TableHead>Ubicación sugerida</TableHead>
               <TableHead>Ubicación actual</TableHead>
@@ -168,7 +174,7 @@ export default function UbicacionesSugeridasClient({
           <TableBody>
             {centrosSorted.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="text-sm text-muted-foreground">
                   No hay ubicaciones sugeridas pendientes.
                 </TableCell>
               </TableRow>
@@ -182,6 +188,10 @@ export default function UbicacionesSugeridasClient({
                     </div>
                   </TableCell>
                   <TableCell>{row.tipo || "—"}</TableCell>
+                  <TableCell>
+                    <div className="text-sm">{row.ubicacion_sugerida_por_nombre || "—"}</div>
+                    <div className="text-xs text-muted-foreground">{row.ubicacion_sugerida_por_email || ""}</div>
+                  </TableCell>
                   <TableCell>{formatFecha(row.ubicacion_sugerida_at)}</TableCell>
                   <TableCell>{formatCoords(row.ubicacion_sugerida)}</TableCell>
                   <TableCell>{formatCoords(row.ubicacion)}</TableCell>

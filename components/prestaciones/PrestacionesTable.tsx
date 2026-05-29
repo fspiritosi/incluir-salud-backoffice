@@ -17,7 +17,7 @@ import {
 } from "@tanstack/react-table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Pencil, MoreHorizontalIcon, XCircle, ChevronDown, Loader2 } from "lucide-react";
+import { Pencil, MoreHorizontalIcon, XCircle, ChevronDown, Loader2, Repeat, Users, CheckCircle2, Trash2 } from "lucide-react";
 import { DataTable } from "@/components/ui/data-table";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
@@ -26,11 +26,25 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { cancelPrestacion } from "@/app/protected/prestaciones/actions";
+import {
+  cancelPrestacion,
+  completePrestacion,
+  deletePrestacion,
+  completePrestacionesBulk,
+  deletePrestacionesBulk,
+  getPrestacionesPendientesDePaciente,
+  listPrestadoresByEspecialidad,
+  reasignarPrestacionesDePaciente,
+  reasignarPrestacionesSeleccionadas,
+  type PacientePendienteResumen,
+} from "@/app/protected/prestaciones/actions";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -38,10 +52,18 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Input as SearchInput } from "@/components/ui/input";
 
+interface ServerPaginationInfo {
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 type PrestacionesFilters = {
   fechaDesde: string;
   fechaHasta: string;
   pacienteIds: string[];
+  prestadorIds: string[];
+  estados: string[];
 };
 
 type CheckedState = boolean | 'indeterminate';
@@ -57,6 +79,9 @@ export type PrestacionRow = {
   cronico?: boolean | null;
   sentido_transporte?: string | null;
   user_id?: string | null;
+  completed_at?: string | null;
+  centros_asignados?: { id: string; nombre: string }[];
+  centro_id?: string | null;
   prestador?: {
     id: string;
     nombre: string;
@@ -74,12 +99,148 @@ export type PrestacionRow = {
 type PrestacionesTableProps = {
   data: PrestacionRow[];
   filters?: PrestacionesFilters;
+  pagination?: ServerPaginationInfo;
+  allPrestadores?: { id: string; nombre: string; apellido: string; documento?: string }[];
+  allPacientes?: { id: string; nombre: string; apellido: string; documento: string }[];
+};
+
+type PrestadorOption = {
+  id: string;
+  nombre?: string | null;
+  apellido?: string | null;
+  documento?: string | null;
 };
 
 const normalizeStringArray = (values: string[] = []) =>
   Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
-export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => {
+function RowActionsCell({ prestacion, canWrite, loading }: {
+  prestacion: PrestacionRow;
+  canWrite: boolean;
+  loading: boolean;
+}) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [isPending, startTransition] = useTransition();
+  const [openDialog, setOpenDialog] = useState<'completar' | 'cancelar' | 'eliminar' | null>(null);
+  const estado = (prestacion.estado || '').toLowerCase();
+
+  if (!canWrite || loading) {
+    return (
+      <Button size="icon" variant="outline" disabled title="No tenés permiso para editar prestaciones">
+        <Pencil className="h-4 w-4" />
+      </Button>
+    );
+  }
+
+  const esPendiente = estado === 'pendiente';
+  const esCancelada = estado === 'cancelada';
+
+  if (!esPendiente && !esCancelada) return null;
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="icon" variant="outline">
+            <MoreHorizontalIcon className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {esPendiente && (
+            <>
+              <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Acciones</DropdownMenuLabel>
+              <DropdownMenuItem asChild>
+                <Link href={`/protected/prestaciones/editar/${prestacion.id}`} className="flex items-center cursor-pointer">
+                  <Pencil className="mr-2 h-4 w-4" /> Editar
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-green-700 focus:text-green-700" onSelect={() => setOpenDialog('completar')}>
+                <CheckCircle2 className="mr-2 h-4 w-4" /> Completar
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Zona de riesgo</DropdownMenuLabel>
+              <DropdownMenuItem className="text-orange-600 focus:text-orange-600" onSelect={() => setOpenDialog('cancelar')}>
+                <XCircle className="mr-2 h-4 w-4" /> Cancelar prestación
+              </DropdownMenuItem>
+            </>
+          )}
+          <DropdownMenuItem className="text-red-600 focus:text-red-600 font-medium" onSelect={() => setOpenDialog('eliminar')}>
+            <Trash2 className="mr-2 h-4 w-4" /> Eliminar permanentemente
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog open={openDialog === 'completar'} onOpenChange={(o) => { if (!o) setOpenDialog(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Completar prestación</DialogTitle>
+            <DialogDescription>Esta acción marcará la prestación como <b>completada</b>. ¿Confirmás?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="sm:justify-end">
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => setOpenDialog(null)}>Cancelar</Button>
+              <Button type="button" className="bg-green-600 hover:bg-green-700 text-white" disabled={isPending}
+                onClick={() => startTransition(async () => {
+                  const { error } = await completePrestacion(prestacion.id);
+                  if (error) toast({ title: "Error", description: (error as any).message || "Intentalo nuevamente", variant: "destructive" });
+                  else { toast({ title: "Prestación completada" }); setOpenDialog(null); router.refresh(); }
+                })}>
+                {isPending ? "Guardando..." : "Confirmar"}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={openDialog === 'cancelar'} onOpenChange={(o) => { if (!o) setOpenDialog(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancelar prestación</DialogTitle>
+            <DialogDescription>Esta acción cambiará el estado a <b>cancelada</b>. ¿Deseás continuar?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="sm:justify-end">
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => setOpenDialog(null)}>Volver</Button>
+              <Button type="button" variant="destructive" disabled={isPending}
+                onClick={() => startTransition(async () => {
+                  const { error } = await cancelPrestacion(prestacion.id);
+                  if (error) toast({ title: "No se pudo cancelar", description: (error as any).message || "Intentalo nuevamente", variant: "destructive" });
+                  else { toast({ title: "Prestación cancelada" }); setOpenDialog(null); router.refresh(); }
+                })}>
+                {isPending ? "Cancelando..." : "Confirmar"}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={openDialog === 'eliminar'} onOpenChange={(o) => { if (!o) setOpenDialog(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar prestación</DialogTitle>
+            <DialogDescription>Esta acción <b>eliminará permanentemente</b> la prestación. ¿Deseás continuar?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="sm:justify-end">
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => setOpenDialog(null)}>Cancelar</Button>
+              <Button type="button" variant="destructive" disabled={isPending}
+                onClick={() => startTransition(async () => {
+                  const { error } = await deletePrestacion(prestacion.id);
+                  if (error) toast({ title: "No se pudo eliminar", description: (error as any).message || "Intentalo nuevamente", variant: "destructive" });
+                  else { toast({ title: "Prestación eliminada" }); setOpenDialog(null); router.refresh(); }
+                })}>
+                {isPending ? "Eliminando..." : "Eliminar"}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = [], allPacientes = [] }: PrestacionesTableProps) => {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -87,6 +248,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
   const canWritePrestaciones = canCreateOrEditPrestacion(roles);
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
+  const [isPaginationPending, startPaginationTransition] = useTransition();
+  const isServerPaginated = Boolean(pagination);
+  const totalPages = pagination ? Math.max(1, Math.ceil(pagination.total / pagination.pageSize || 1)) : 1;
 
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -109,12 +273,41 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
   const [massCancelOpen, setMassCancelOpen] = useState(false);
   const [massCancelSaving, setMassCancelSaving] = useState(false);
   const [massCancelError, setMassCancelError] = useState<string | null>(null);
+  const [massCompleteOpen, setMassCompleteOpen] = useState(false);
+  const [massCompleteSaving, setMassCompleteSaving] = useState(false);
+  const [massCompleteError, setMassCompleteError] = useState<string | null>(null);
+  const [massDeleteOpen, setMassDeleteOpen] = useState(false);
+  const [massDeleteSaving, setMassDeleteSaving] = useState(false);
+  const [massDeleteError, setMassDeleteError] = useState<string | null>(null);
+
+  // Reasignación por selección
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [reassignPrestadores, setReassignPrestadores] = useState<PrestadorOption[]>([]);
+  const [reassignPrestadorId, setReassignPrestadorId] = useState('');
+  const [reassignLoading, setReassignLoading] = useState(false);
+  const [reassignSaving, setReassignSaving] = useState(false);
+  const [reassignError, setReassignError] = useState<string | null>(null);
+  const [reassignPrestadorSearch, setReassignPrestadorSearch] = useState('');
+
+  // Reasignación por paciente
+  const [byPatientOpen, setByPatientOpen] = useState(false);
+  const [byPatientPacienteId, setByPatientPacienteId] = useState('');
+  const [byPatientPacienteSearch, setByPatientPacienteSearch] = useState('');
+  const [byPatientPrestadorId, setByPatientPrestadorId] = useState('');
+  const [byPatientPrestadores, setByPatientPrestadores] = useState<PrestadorOption[]>([]);
+  const [byPatientPrestadorSearch, setByPatientPrestadorSearch] = useState('');
+  const [byPatientPrestacionesCount, setByPatientPrestacionesCount] = useState<number | null>(null);
+  const [byPatientLoadingPrestaciones, setByPatientLoadingPrestaciones] = useState(false);
+  const [byPatientLoadingPrestadores, setByPatientLoadingPrestadores] = useState(false);
+  const [byPatientSaving, setByPatientSaving] = useState(false);
+  const [byPatientError, setByPatientError] = useState<string | null>(null);
+
   const [tipoFilterSearch, setTipoFilterSearch] = useState('');
   const [pacienteFilterSearch, setPacienteFilterSearch] = useState('');
   const [prestadorFilterSearch, setPrestadorFilterSearch] = useState('');
-  const [prestadorSelected, setPrestadorSelected] = useState<string[]>([]);
+  const [prestadorSelected, setPrestadorSelected] = useState<string[]>(normalizeStringArray(filters?.prestadorIds));
   const [estadoFilterSearch, setEstadoFilterSearch] = useState('');
-  const [estadoSelected, setEstadoSelected] = useState<string[]>([]);
+  const [estadoSelected, setEstadoSelected] = useState<string[]>(normalizeStringArray(filters?.estados));
   const [diaFilterSearch, setDiaFilterSearch] = useState('');
 
   const enhancedData = useMemo(() => {
@@ -145,6 +338,11 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
   }, [estadoFilterSearch]);
 
   const pacientesOptions = useMemo(() => {
+    if (allPacientes.length > 0) {
+      return allPacientes
+        .map(p => ({ id: p.id, label: `${p.apellido}, ${p.nombre}` }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    }
     const map = new Map<string, string>();
     enhancedData.forEach((item) => {
       if (item.paciente?.id) {
@@ -155,7 +353,7 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     return Array.from(map.entries())
       .map(([id, label]) => ({ id, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [enhancedData]);
+  }, [allPacientes, enhancedData]);
 
   const prestadoresOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -222,7 +420,15 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     {
       accessorKey: "fecha",
       header: "Fecha",
-      cell: ({ row }) => new Date(row.getValue("fecha")).toLocaleDateString('es-AR'),
+      cell: ({ row }) => {
+        const d = new Date(row.getValue("fecha"));
+        return (
+          <div className="flex flex-col leading-tight">
+            <span>{d.toLocaleDateString('es-AR')}</span>
+            <span className="text-xs text-muted-foreground">{d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} hs</span>
+          </div>
+        );
+      },
       filterFn: (row, columnId, filterValues) => {
         const fecha = new Date(row.getValue(columnId));
         const [inicio, fin] = filterValues as [string, string];
@@ -274,6 +480,26 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
         if (!Array.isArray(values) || values.length === 0) return true;
         const estado = (row.getValue(columnId) as string | null) ?? "";
         return values.map((v) => v.toLowerCase()).includes(estado.toLowerCase());
+      },
+    },
+    {
+      accessorKey: "completed_at",
+      header: "Validación",
+      meta: { label: "Fecha de validación" },
+      cell: ({ row }) => {
+        const value = row.getValue("completed_at") as string | null;
+        if (!value) {
+          return <span className="text-muted-foreground">-</span>;
+        }
+        const date = new Date(value);
+        const time = date.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+        const dateLabel = date.toLocaleDateString("es-AR");
+        return (
+          <div className="flex flex-col leading-tight">
+            <span>{time} hs</span>
+            <span className="text-xs text-muted-foreground">{dateLabel}</span>
+          </div>
+        );
       },
     },
     {
@@ -335,6 +561,30 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       },
     },
     {
+      accessorKey: "centros_asignados",
+      header: "Centro asignado",
+      cell: ({ row }) => {
+        const centros = (row.getValue("centros_asignados") as { id: string; nombre: string }[]) || [];
+        if (!centros.length) {
+          return (
+            <Badge variant="outline" className="bg-slate-100 text-slate-700 border-slate-200">
+              Sin asignar
+            </Badge>
+          );
+        }
+        return (
+          <div className="flex flex-wrap gap-1">
+            {centros.map((centro) => (
+              <Badge key={centro.id} variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                {centro.nombre}
+              </Badge>
+            ))}
+          </div>
+        );
+      },
+      enableSorting: false,
+    },
+    {
       id: "paciente_documento",
       header: "DNI",
       accessorFn: (row) => row.paciente?.documento,
@@ -346,91 +596,18 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     {
       id: "actions",
       header: "Acciones",
-      cell: ({ row }) => {
-        const prestacion = row.original;
-        const estado = (prestacion.estado || '').toLowerCase();
-        if (!canWritePrestaciones || loading) {
-          return (
-            <Button
-              size="icon"
-              variant="outline"
-              disabled
-              title="No tenés permiso para editar prestaciones"
-              aria-disabled
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-          );
-        }
-        // Solo acciones para pendientes
-        if (estado === 'pendiente') {
-          return (
-            <div className="flex items-center gap-2">
-              <Link href={`/protected/prestaciones/editar/${prestacion.id}`} aria-label="Editar">
-                <Button size="icon" variant="outline">
-                  <Pencil className="h-4 w-4" />
-                </Button>
-              </Link>
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button size="icon" variant="destructive" aria-label="Cancelar prestación">
-                    <XCircle className="h-4 w-4" />
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Cancelar prestación</DialogTitle>
-                    <DialogDescription>
-                      Esta acción cambiará el estado a <b>cancelada</b>. ¿Deseás continuar?
-                    </DialogDescription>
-                  </DialogHeader>
-                  <DialogFooter className="sm:justify-end">
-                    <div className="flex items-center gap-2">
-                      <DialogClose asChild>
-                        <Button type="button" variant="outline">Cancelar</Button>
-                      </DialogClose>
-                      <DialogClose asChild>
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          disabled={isPending}
-                          onClick={() => {
-                            startTransition(async () => {
-                              const { error } = await cancelPrestacion(prestacion.id);
-                              if (error) {
-                                toast({
-                                  title: "No se pudo cancelar",
-                                  description: error.message || "Intentalo nuevamente",
-                                  variant: "destructive",
-                                });
-                              } else {
-                                toast({
-                                  title: "Prestación cancelada",
-                                  description: "La prestación pasó a estado cancelada.",
-                                });
-                              }
-                            });
-                          }}
-                        >
-                          {isPending ? "Cancelando..." : "Confirmar"}
-                        </Button>
-                      </DialogClose>
-                    </div>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-          );
-        }
-        // Para completadas o canceladas: sin acciones de edición/cancelación
-        return null;
-      },
+      cell: ({ row }) => (
+        <RowActionsCell
+          prestacion={row.original}
+          canWrite={canWritePrestaciones}
+          loading={loading}
+        />
+      ),
     },
   ];
 
   const formatLocalTimestamp = (date: Date) => {
-    const adjusted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    return adjusted.toISOString().slice(0, 19);
+    return date.toISOString();
   };
 
   const table = useReactTable({
@@ -442,12 +619,14 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     getFilteredRowModel: getFilteredRowModel(),
     enableRowSelection: (row) => {
       const estado = (row.original.estado || '').toLowerCase();
-      return estado === 'pendiente';
+      return estado === 'pendiente' || estado === 'cancelada';
     },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
+    manualPagination: isServerPaginated,
+    pageCount: isServerPaginated ? totalPages : undefined,
     state: {
       sorting,
       columnFilters,
@@ -456,10 +635,49 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     },
     initialState: {
       pagination: {
-        pageSize: 10,
+        pageSize: isServerPaginated ? (pagination?.pageSize || 25) : 25,
       },
     },
   });
+
+  useEffect(() => {
+    if (!isServerPaginated) return;
+    table.setPageIndex(Math.max(0, (pagination?.page ?? 1) - 1));
+    table.setPageSize(pagination?.pageSize || 25);
+  }, [isServerPaginated, pagination?.page, pagination?.pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const updateQueryParams = (next: { page?: number; pageSize?: number }) => {
+    const current = new URLSearchParams(searchParams?.toString() ?? "");
+    if (next.page !== undefined) current.set("page", String(next.page));
+    if (next.pageSize !== undefined) current.set("pageSize", String(next.pageSize));
+    try {
+      const saved = localStorage.getItem("prestaciones_filters");
+      const parsed = saved ? JSON.parse(saved) : {};
+      localStorage.setItem("prestaciones_filters", JSON.stringify({
+        ...parsed,
+        page: next.page ?? parsed.page ?? 1,
+        pageSize: next.pageSize ?? parsed.pageSize ?? 25,
+      }));
+    } catch {}
+    const query = current.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname);
+    startPaginationTransition(() => { router.refresh(); });
+  };
+
+  const goToPage = (target: number) => {
+    if (!pagination) return;
+    const safe = Math.min(Math.max(1, target), totalPages);
+    if (safe === pagination.page) return;
+    updateQueryParams({ page: safe, pageSize: pagination.pageSize });
+  };
+
+  const handlePageSizeChange = (size: number) => {
+    if (!pagination || size === pagination.pageSize) return;
+    updateQueryParams({ page: 1, pageSize: size });
+  };
+
+  const firstItem = pagination && pagination.total > 0 ? (pagination.page - 1) * pagination.pageSize + 1 : 0;
+  const lastItem = pagination ? Math.min(pagination.total, pagination.page * pagination.pageSize) : 0;
 
   const selectedCount = Object.keys(rowSelection).length;
   const selectedRows = table.getRowModel().rows
@@ -672,14 +890,169 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     });
   };
 
+  const handleMassCompleteSave = () => {
+    if (!selectedRows.length) return;
+    setMassCompleteSaving(true);
+    setMassCompleteError(null);
+    startTransition(async () => {
+      try {
+        const ids = selectedRows.map(r => r.id);
+        const result = await completePrestacionesBulk(ids);
+        toast({ title: `${result.completed} prestaciones completadas`, description: result.failed > 0 ? `${result.failed} no se pudieron completar.` : undefined });
+        setMassCompleteOpen(false);
+        setRowSelection({});
+        router.refresh();
+      } catch {
+        setMassCompleteError('No se pudieron completar todas las prestaciones. Intentalo nuevamente.');
+      } finally {
+        setMassCompleteSaving(false);
+      }
+    });
+  };
+
+  const handleMassDeleteSave = () => {
+    if (!selectedRows.length) return;
+    setMassDeleteSaving(true);
+    setMassDeleteError(null);
+    startTransition(async () => {
+      try {
+        const ids = selectedRows.map(r => r.id);
+        const result = await deletePrestacionesBulk(ids);
+        toast({ title: `${result.deleted} prestaciones eliminadas`, description: result.skipped > 0 ? `${result.skipped} omitidas (completadas).` : undefined });
+        setMassDeleteOpen(false);
+        setRowSelection({});
+        router.refresh();
+      } catch {
+        setMassDeleteError('No se pudieron eliminar todas las prestaciones. Intentalo nuevamente.');
+      } finally {
+        setMassDeleteSaving(false);
+      }
+    });
+  };
+
+  const handleOpenReassign = async () => {
+    if (!selectedRows.length) return;
+    const tipo = selectedRows[0]?.tipo_prestacion;
+    setReassignError(null);
+    setReassignPrestadorId('');
+    setReassignPrestadorSearch('');
+    setReassignLoading(true);
+    setReassignOpen(true);
+    try {
+      const { data } = await listPrestadoresByEspecialidad(tipo);
+      setReassignPrestadores(data || []);
+    } catch {
+      setReassignError('No se pudieron cargar los prestadores.');
+    } finally {
+      setReassignLoading(false);
+    }
+  };
+
+  const handleReassignSave = () => {
+    if (!reassignPrestadorId) {
+      setReassignError('Seleccioná un prestador destino.');
+      return;
+    }
+    setReassignSaving(true);
+    setReassignError(null);
+    startTransition(async () => {
+      try {
+        const ids = selectedRows.map(r => r.id);
+        const { data, error } = await reasignarPrestacionesSeleccionadas(ids, reassignPrestadorId);
+        if (error) {
+          setReassignError((error as any).message ?? 'Error al reasignar');
+          return;
+        }
+        const { successIds, errors } = data!;
+        if (errors.length > 0) {
+          toast({
+            title: `${successIds.length} reasignadas, ${errors.length} con conflicto`,
+            description: errors.map(e => e.message).join(' · '),
+            variant: 'destructive',
+          });
+        } else {
+          toast({ title: `${successIds.length} prestaciones reasignadas correctamente` });
+        }
+        setReassignOpen(false);
+        setRowSelection({});
+        router.refresh();
+      } catch {
+        setReassignError('Error inesperado al reasignar.');
+      } finally {
+        setReassignSaving(false);
+      }
+    });
+  };
+
+  const handleByPatientPacienteChange = async (pacienteId: string) => {
+    setByPatientPacienteId(pacienteId);
+    setByPatientPrestadores([]);
+    setByPatientPrestadorId('');
+    setByPatientPrestacionesCount(null);
+    setByPatientError(null);
+    if (!pacienteId) return;
+    setByPatientLoadingPrestaciones(true);
+    try {
+      const { data } = await getPrestacionesPendientesDePaciente(pacienteId);
+      setByPatientPrestacionesCount((data || []).length);
+      const tipos = Array.from(new Set((data || []).map(p => p.tipo_prestacion)));
+      if (tipos.length > 0) {
+        setByPatientLoadingPrestadores(true);
+        const { data: prests } = await listPrestadoresByEspecialidad(tipos[0]);
+        setByPatientPrestadores(prests || []);
+        setByPatientLoadingPrestadores(false);
+      }
+    } catch {
+      setByPatientError('No se pudieron cargar las prestaciones del paciente.');
+    } finally {
+      setByPatientLoadingPrestaciones(false);
+    }
+  };
+
+  const handleByPatientSave = () => {
+    if (!byPatientPacienteId || !byPatientPrestadorId) {
+      setByPatientError('Seleccioná un paciente y un prestador destino.');
+      return;
+    }
+    setByPatientSaving(true);
+    setByPatientError(null);
+    startTransition(async () => {
+      try {
+        const { data, error } = await reasignarPrestacionesDePaciente(byPatientPacienteId, byPatientPrestadorId);
+        if (error) {
+          setByPatientError((error as any).message ?? 'Error al reasignar');
+          return;
+        }
+        const { successIds, errors } = data!;
+        if (errors.length > 0) {
+          toast({
+            title: `${successIds.length} reasignadas, ${errors.length} con conflicto`,
+            description: errors.map(e => e.message).join(' · '),
+            variant: 'destructive',
+          });
+        } else {
+          toast({ title: `${successIds.length} prestaciones reasignadas correctamente` });
+        }
+        setByPatientOpen(false);
+        setByPatientPacienteId('');
+        setByPatientPrestadorId('');
+        setByPatientPrestacionesCount(null);
+        router.refresh();
+      } catch {
+        setByPatientError('Error inesperado al reasignar.');
+      } finally {
+        setByPatientSaving(false);
+      }
+    });
+  };
+
   const applyFiltersToQueryParams = useCallback(
-    (next: { fechaDesde?: string; fechaHasta?: string; pacienteIds?: string[] }) => {
+    (next: { fechaDesde?: string; fechaHasta?: string; pacienteIds?: string[]; prestadorIds?: string[]; estados?: string[] }) => {
       const params = new URLSearchParams(searchParams?.toString() ?? "");
       const setArrayParam = (key: string, values: string[] = []) => {
         params.delete(key);
         values.forEach((value) => params.append(key, value));
       };
-
       const setOptional = (key: string, value?: string) => {
         if (value?.trim()) params.set(key, value.trim());
         else params.delete(key);
@@ -688,6 +1061,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       setOptional("fechaDesde", next.fechaDesde ?? "");
       setOptional("fechaHasta", next.fechaHasta ?? "");
       setArrayParam("pacienteIds", normalizeStringArray(next.pacienteIds));
+      setArrayParam("prestadorIds", normalizeStringArray(next.prestadorIds));
+      setArrayParam("estados", normalizeStringArray(next.estados));
+      params.set("page", "1");
 
       try {
         localStorage.setItem(
@@ -696,6 +1072,10 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
             fechaDesde: next.fechaDesde ?? "",
             fechaHasta: next.fechaHasta ?? "",
             pacienteIds: normalizeStringArray(next.pacienteIds),
+            prestadorIds: normalizeStringArray(next.prestadorIds),
+            estados: normalizeStringArray(next.estados),
+            page: 1,
+            pageSize: pagination?.pageSize ?? 25,
           })
         );
       } catch {}
@@ -711,21 +1091,27 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     const hasFilterParams =
       searchParams?.has("fechaDesde") ||
       searchParams?.has("fechaHasta") ||
-      searchParams?.has("pacienteIds");
+      searchParams?.has("pacienteIds") ||
+      searchParams?.has("prestadorIds") ||
+      searchParams?.has("estados") ||
+      searchParams?.has("page") ||
+      searchParams?.has("pageSize");
     if (hasFilterParams) return;
     try {
       const saved = localStorage.getItem("prestaciones_filters");
       if (!saved) return;
       const parsed = JSON.parse(saved);
-      const hasAny =
-        parsed.fechaDesde || parsed.fechaHasta || parsed.pacienteIds?.length;
+      const hasAny = parsed.fechaDesde || parsed.fechaHasta || parsed.pacienteIds?.length ||
+        parsed.prestadorIds?.length || parsed.estados?.length || parsed.page > 1 || (parsed.pageSize && parsed.pageSize !== 25);
       if (!hasAny) return;
       const p = new URLSearchParams();
       if (parsed.fechaDesde) p.set("fechaDesde", parsed.fechaDesde);
       if (parsed.fechaHasta) p.set("fechaHasta", parsed.fechaHasta);
-      (parsed.pacienteIds || []).forEach((id: string) =>
-        p.append("pacienteIds", id)
-      );
+      (parsed.pacienteIds || []).forEach((id: string) => p.append("pacienteIds", id));
+      (parsed.prestadorIds || []).forEach((id: string) => p.append("prestadorIds", id));
+      (parsed.estados || []).forEach((e: string) => p.append("estados", e));
+      if (parsed.page && parsed.page > 1) p.set("page", String(parsed.page));
+      if (parsed.pageSize && parsed.pageSize !== 25) p.set("pageSize", String(parsed.pageSize));
       router.replace(`${pathname}?${p.toString()}`);
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -735,7 +1121,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
     setFechaDesde(filters?.fechaDesde ?? "");
     setFechaHasta(filters?.fechaHasta ?? "");
     setPacienteSelected(normalizeStringArray(filters?.pacienteIds));
-  }, [filters?.fechaDesde, filters?.fechaHasta, filters?.pacienteIds]);
+    setPrestadorSelected(normalizeStringArray(filters?.prestadorIds));
+    setEstadoSelected(normalizeStringArray(filters?.estados));
+  }, [filters?.fechaDesde, filters?.fechaHasta, filters?.pacienteIds, filters?.prestadorIds, filters?.estados]);
 
   const applyDateFilters = () => {
     if (
@@ -748,6 +1136,8 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       fechaDesde,
       fechaHasta,
       pacienteIds: pacienteSelected,
+      prestadorIds: prestadorSelected,
+      estados: estadoSelected,
     });
   };
 
@@ -759,6 +1149,8 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       fechaDesde: "",
       fechaHasta: "",
       pacienteIds: pacienteSelected,
+      prestadorIds: prestadorSelected,
+      estados: estadoSelected,
     });
   };
 
@@ -768,6 +1160,8 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       fechaDesde,
       fechaHasta,
       pacienteIds: pacienteSelected,
+      prestadorIds: prestadorSelected,
+      estados: estadoSelected,
     });
   };
 
@@ -778,6 +1172,8 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
       fechaDesde,
       fechaHasta,
       pacienteIds: [],
+      prestadorIds: prestadorSelected,
+      estados: estadoSelected,
     });
   };
 
@@ -800,17 +1196,25 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
             {table
               .getAllColumns()
               .filter((column) => column.getCanHide())
-              .map((column) => (
-                <DropdownMenuCheckboxItem
-                  key={column.id}
-                  className="capitalize max-w-[200px] truncate"
-                  checked={column.getIsVisible()}
-                  onCheckedChange={(value) => column.toggleVisibility(!!value)}
-                  title={column.columnDef.header?.toString() || column.id}
-                >
-                  {column.columnDef.header?.toString() || column.id}
-                </DropdownMenuCheckboxItem>
-              ))}
+              .map((column) => {
+                const headerValue = column.columnDef.header;
+                const labelFromHeader = typeof headerValue === "string"
+                  ? headerValue
+                  : undefined;
+                const metaLabel = (column.columnDef.meta as { label?: string } | undefined)?.label;
+                const text = metaLabel || labelFromHeader || column.id;
+                return (
+                  <DropdownMenuCheckboxItem
+                    key={column.id}
+                    className="max-w-[200px] truncate"
+                    checked={column.getIsVisible()}
+                    onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                    title={text}
+                  >
+                    {text}
+                  </DropdownMenuCheckboxItem>
+                );
+              })}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -925,26 +1329,18 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
             table.getColumn("paciente_documento")?.setFilterValue(event.target.value)
           }
         />
-        <DropdownMenu
-          onOpenChange={(open) => {
-            if (!open) return;
-            const current = ((table.getColumn("prestador")?.getFilterValue() as string[]) || []);
-            setPrestadorSelected(normalizeStringArray(current));
-          }}
-        >
+        <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="w-[180px] justify-between">
               <span className="truncate text-left">
                 {(() => {
-                  const selected = prestadorSelected.length
-                    ? prestadorSelected
-                    : ((table.getColumn("prestador")?.getFilterValue() as string[]) || []);
-                  if (!selected?.length) return "Prestadores...";
-                  if (selected.length === 1) {
-                    const option = prestadoresOptions.find(opt => opt.id === selected[0]);
-                    return option?.label || "1 seleccionado";
+                  if (!prestadorSelected.length) return "Prestadores...";
+                  if (prestadorSelected.length === 1) {
+                    const p = allPrestadores.find(opt => opt.id === prestadorSelected[0]);
+                    const label = p ? `${p.apellido} ${p.nombre}`.trim() : "1 seleccionado";
+                    return label || "1 seleccionado";
                   }
-                  return `${selected.length} seleccionados`;
+                  return `${prestadorSelected.length} seleccionados`;
                 })()}
               </span>
               <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
@@ -958,7 +1354,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
               className="mb-2"
             />
             <div className="max-h-[320px] overflow-y-auto space-y-2">
-              {prestadoresOptions.filter(opt => opt.label.toLowerCase().includes(prestadorFilterSearch.toLowerCase().trim()))
+              {allPrestadores
+                .map(p => ({ id: p.id, label: `${p.apellido ?? ''} ${p.nombre ?? ''}`.trim() || p.id }))
+                .filter(opt => opt.label.toLowerCase().includes(prestadorFilterSearch.toLowerCase().trim()))
                 .map((option) => {
                   const isChecked = prestadorSelected.includes(option.id);
                   return (
@@ -978,7 +1376,9 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
                     </label>
                   );
                 })}
-              {prestadoresOptions.filter(opt => opt.label.toLowerCase().includes(prestadorFilterSearch.toLowerCase().trim())).length === 0 && (
+              {allPrestadores.filter(p =>
+                `${p.apellido ?? ''} ${p.nombre ?? ''}`.trim().toLowerCase().includes(prestadorFilterSearch.toLowerCase().trim())
+              ).length === 0 && (
                 <p className="text-sm text-muted-foreground">Sin resultados</p>
               )}
             </div>
@@ -988,9 +1388,15 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
                 size="sm"
                 onClick={() => {
                   setPrestadorSelected([]);
-                  table.getColumn("prestador")?.setFilterValue(undefined);
+                  applyFiltersToQueryParams({
+                    fechaDesde,
+                    fechaHasta,
+                    pacienteIds: pacienteSelected,
+                    prestadorIds: [],
+                    estados: estadoSelected,
+                  });
                 }}
-                disabled={prestadorSelected.length === 0}
+                disabled={prestadorSelected.length === 0 && !filters?.prestadorIds?.length}
               >
                 Limpiar
               </Button>
@@ -998,12 +1404,17 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
                 variant="default"
                 size="sm"
                 onClick={() => {
-                  const next = normalizeStringArray(prestadorSelected);
-                  table.getColumn("prestador")?.setFilterValue(next.length ? next : undefined);
+                  applyFiltersToQueryParams({
+                    fechaDesde,
+                    fechaHasta,
+                    pacienteIds: pacienteSelected,
+                    prestadorIds: prestadorSelected,
+                    estados: estadoSelected,
+                  });
                 }}
                 disabled={arraysEqual(
                   normalizeStringArray(prestadorSelected),
-                  normalizeStringArray((table.getColumn("prestador")?.getFilterValue() as string[]) || [])
+                  normalizeStringArray(filters?.prestadorIds || [])
                 )}
               >
                 Aplicar
@@ -1011,26 +1422,16 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
-        <DropdownMenu
-          onOpenChange={(open) => {
-            if (!open) return;
-            const current = ((table.getColumn("estado")?.getFilterValue() as string[]) || []);
-            setEstadoSelected(normalizeStringArray(current));
-          }}
-        >
+        <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="w-[160px] justify-between">
               <span className="truncate text-left">
                 {(() => {
-                  const selected = estadoSelected.length
-                    ? estadoSelected
-                    : ((table.getColumn("estado")?.getFilterValue() as string[]) || []);
-                  if (!selected.length) return "Estado...";
-                  if (selected.length === 1) {
-                    const value = selected[0];
-                    return value.charAt(0).toUpperCase() + value.slice(1);
+                  if (!estadoSelected.length) return "Estado...";
+                  if (estadoSelected.length === 1) {
+                    return estadoSelected[0].charAt(0).toUpperCase() + estadoSelected[0].slice(1);
                   }
-                  return `${selected.length} seleccionados`;
+                  return `${estadoSelected.length} seleccionados`;
                 })()}
               </span>
               <ChevronDown className="ml-2 h-3.5 w-3.5 text-muted-foreground" />
@@ -1073,9 +1474,15 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
                 size="sm"
                 onClick={() => {
                   setEstadoSelected([]);
-                  table.getColumn("estado")?.setFilterValue(undefined);
+                  applyFiltersToQueryParams({
+                    fechaDesde,
+                    fechaHasta,
+                    pacienteIds: pacienteSelected,
+                    prestadorIds: prestadorSelected,
+                    estados: [],
+                  });
                 }}
-                disabled={estadoSelected.length === 0}
+                disabled={estadoSelected.length === 0 && !filters?.estados?.length}
               >
                 Limpiar
               </Button>
@@ -1083,12 +1490,17 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
                 variant="default"
                 size="sm"
                 onClick={() => {
-                  const next = normalizeStringArray(estadoSelected);
-                  table.getColumn("estado")?.setFilterValue(next.length ? next : undefined);
+                  applyFiltersToQueryParams({
+                    fechaDesde,
+                    fechaHasta,
+                    pacienteIds: pacienteSelected,
+                    prestadorIds: prestadorSelected,
+                    estados: estadoSelected,
+                  });
                 }}
                 disabled={arraysEqual(
                   normalizeStringArray(estadoSelected),
-                  normalizeStringArray((table.getColumn("estado")?.getFilterValue() as string[]) || [])
+                  normalizeStringArray(filters?.estados || [])
                 )}
               >
                 Aplicar
@@ -1100,11 +1512,17 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
 
       <DataTable table={table} isLoading={loading} />
       
-      <DataTablePagination 
-        table={table} 
+      <DataTablePagination
+        table={table}
         showSelectedCount={true}
         showPageNumbers={true}
-        pageSizeOptions={[10, 25, 50, 100]}
+        pageSizeOptions={[25, 50, 100, 250]}
+        isServerPaginated={isServerPaginated}
+        goToPage={isServerPaginated ? goToPage : undefined}
+        handlePageSizeChange={isServerPaginated ? handlePageSizeChange : undefined}
+        firstItem={isServerPaginated ? firstItem : undefined}
+        lastItem={isServerPaginated ? lastItem : undefined}
+        total={isServerPaginated ? pagination?.total : undefined}
       />
 
       {selectedCount > 0 && (
@@ -1221,6 +1639,66 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
           </DialogContent>
         </Dialog>
 
+          <Button
+            variant="outline"
+            className="ml-2 bg-amber-50 text-amber-700 hover:bg-amber-100"
+            onClick={handleOpenReassign}
+          >
+            <Repeat className="mr-2 h-4 w-4" />
+            Reasignar {selectedCount} seleccionadas
+          </Button>
+
+          <Dialog open={reassignOpen} onOpenChange={setReassignOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Reasignar {selectedCount} prestaciones</DialogTitle>
+                <DialogDescription>
+                  Seleccioná el nuevo prestador. Solo se reasignan prestaciones <b>pendientes</b> del mismo tipo.
+                </DialogDescription>
+              </DialogHeader>
+              {reassignError && <p className="text-sm text-red-600">{reassignError}</p>}
+              {reassignLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando prestadores…</div>
+              ) : (
+                <div className="space-y-2">
+                  <Label>Nuevo prestador</Label>
+                  <SearchInput
+                    placeholder="Buscar por nombre…"
+                    value={reassignPrestadorSearch}
+                    onChange={e => setReassignPrestadorSearch(e.target.value)}
+                  />
+                  <div className="max-h-56 overflow-y-auto space-y-1 border rounded p-2">
+                    {reassignPrestadores
+                      .filter(p => `${p.apellido ?? ''} ${p.nombre ?? ''}`.toLowerCase().includes(reassignPrestadorSearch.toLowerCase()))
+                      .map(p => (
+                        <label key={p.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="radio"
+                            name="reassign_prestador"
+                            value={p.id}
+                            checked={reassignPrestadorId === p.id}
+                            onChange={() => setReassignPrestadorId(p.id)}
+                          />
+                          {`${p.apellido ?? ''}, ${p.nombre ?? ''}`}
+                          {p.documento ? <span className="text-xs text-muted-foreground">DNI {p.documento}</span> : null}
+                        </label>
+                      ))}
+                    {reassignPrestadores.length === 0 && <p className="text-sm text-muted-foreground">Sin prestadores disponibles para este tipo.</p>}
+                  </div>
+                </div>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setReassignOpen(false)}>Cancelar</Button>
+                <Button
+                  disabled={!reassignPrestadorId || reassignSaving || reassignLoading}
+                  onClick={handleReassignSave}
+                >
+                  {reassignSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Reasignando…</> : 'Confirmar reasignación'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           <Dialog open={massCancelOpen} onOpenChange={setMassCancelOpen}>
             <DialogTrigger asChild>
               <Button
@@ -1257,8 +1735,161 @@ export const PrestacionesTable = ({ data, filters }: PrestacionesTableProps) => 
               </DialogFooter>
             </DialogContent>
           </Dialog>
+
+          <Dialog open={massCompleteOpen} onOpenChange={setMassCompleteOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="ml-2 text-green-700 border-green-400 hover:bg-green-50">
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                Completar {selectedCount} seleccionadas
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Completar {selectedCount} prestaciones</DialogTitle>
+                <DialogDescription>
+                  Esta acción marcará como <b>completadas</b> todas las seleccionadas. ¿Deseás continuar?
+                </DialogDescription>
+              </DialogHeader>
+              {massCompleteError && <div className="text-red-600 text-sm">{massCompleteError}</div>}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setMassCompleteOpen(false)}>Volver</Button>
+                <Button className="bg-green-600 hover:bg-green-700 text-white" disabled={massCompleteSaving} onClick={handleMassCompleteSave}>
+                  {massCompleteSaving ? 'Completando...' : 'Confirmar'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={massDeleteOpen} onOpenChange={setMassDeleteOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="ml-2 text-red-700 border-red-400 hover:bg-red-50">
+                <Trash2 className="mr-2 h-4 w-4" />
+                Eliminar {selectedCount} seleccionadas
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Eliminar {selectedCount} prestaciones</DialogTitle>
+                <DialogDescription>
+                  Esta acción <b>eliminará permanentemente</b> las prestaciones seleccionadas (las completadas serán omitidas). ¿Deseás continuar?
+                </DialogDescription>
+              </DialogHeader>
+              {massDeleteError && <div className="text-red-600 text-sm">{massDeleteError}</div>}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setMassDeleteOpen(false)}>Volver</Button>
+                <Button variant="destructive" disabled={massDeleteSaving} onClick={handleMassDeleteSave}>
+                  {massDeleteSaving ? 'Eliminando...' : 'Eliminar'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       )}
+
+      {/* Reasignar por paciente */}
+      <div className="mt-2 flex justify-end">
+        <Button
+          variant="outline"
+          className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+          onClick={() => { setByPatientOpen(true); setByPatientError(null); }}
+        >
+          <Users className="mr-2 h-4 w-4" />
+          Reasignar por paciente
+        </Button>
+      </div>
+
+      <Dialog open={byPatientOpen} onOpenChange={setByPatientOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Reasignar prestaciones por paciente</DialogTitle>
+            <DialogDescription>
+              Reasigna todas las prestaciones <b>pendientes</b> de un paciente a otro prestador.
+            </DialogDescription>
+          </DialogHeader>
+          {byPatientError && <p className="text-sm text-red-600">{byPatientError}</p>}
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <Label>Paciente</Label>
+              <SearchInput
+                placeholder="Buscar por nombre o apellido…"
+                value={byPatientPacienteSearch}
+                onChange={e => setByPatientPacienteSearch(e.target.value)}
+              />
+              <div className="max-h-44 overflow-y-auto space-y-1 border rounded p-2">
+                {allPacientes
+                  .filter(p => `${p.apellido} ${p.nombre}`.toLowerCase().includes(byPatientPacienteSearch.toLowerCase()))
+                  .map(p => (
+                    <label key={p.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="radio"
+                        name="bypatient_paciente"
+                        value={p.id}
+                        checked={byPatientPacienteId === p.id}
+                        onChange={() => handleByPatientPacienteChange(p.id)}
+                      />
+                      {`${p.apellido}, ${p.nombre}`}
+                      <span className="text-xs text-muted-foreground">DNI {p.documento}</span>
+                    </label>
+                  ))}
+                {allPacientes.length === 0 && <p className="text-sm text-muted-foreground">Sin pacientes.</p>}
+              </div>
+              {byPatientPacienteId && (
+                <p className="text-xs text-muted-foreground">
+                  {byPatientLoadingPrestaciones
+                    ? 'Cargando prestaciones…'
+                    : byPatientPrestacionesCount === null
+                    ? ''
+                    : byPatientPrestacionesCount === 0
+                    ? 'No hay prestaciones pendientes para este paciente.'
+                    : `${byPatientPrestacionesCount} prestaciones pendientes encontradas.`}
+                </p>
+              )}
+            </div>
+
+            {byPatientPrestacionesCount !== null && byPatientPrestacionesCount > 0 && (
+              <div className="space-y-1">
+                <Label>Nuevo prestador</Label>
+                <SearchInput
+                  placeholder="Buscar por nombre…"
+                  value={byPatientPrestadorSearch}
+                  onChange={e => setByPatientPrestadorSearch(e.target.value)}
+                />
+                {byPatientLoadingPrestadores ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando…</div>
+                ) : (
+                  <div className="max-h-44 overflow-y-auto space-y-1 border rounded p-2">
+                    {byPatientPrestadores
+                      .filter(p => `${p.apellido ?? ''} ${p.nombre ?? ''}`.toLowerCase().includes(byPatientPrestadorSearch.toLowerCase()))
+                      .map(p => (
+                        <label key={p.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="radio"
+                            name="bypatient_prestador"
+                            value={p.id}
+                            checked={byPatientPrestadorId === p.id}
+                            onChange={() => setByPatientPrestadorId(p.id)}
+                          />
+                          {`${p.apellido ?? ''}, ${p.nombre ?? ''}`}
+                          {p.documento ? <span className="text-xs text-muted-foreground">DNI {p.documento}</span> : null}
+                        </label>
+                      ))}
+                    {byPatientPrestadores.length === 0 && <p className="text-sm text-muted-foreground">Sin prestadores disponibles.</p>}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setByPatientOpen(false)}>Cancelar</Button>
+            <Button
+              disabled={!byPatientPacienteId || !byPatientPrestadorId || byPatientSaving}
+              onClick={handleByPatientSave}
+            >
+              {byPatientSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Reasignando…</> : 'Confirmar reasignación'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

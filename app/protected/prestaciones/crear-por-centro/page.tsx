@@ -28,8 +28,8 @@ export default async function CrearPorCentroPage() {
     redirect("/acceso-denegado");
   }
 
-  // Obtener centros activos (solo geriátricos)
-  const { data: centros } = await listCentros({ activo: "si", tipos: ["geriatrico"] });
+  // Obtener centros activos (cualquier tipo)
+  const { data: centros } = await listCentros({ activo: "si" });
 
   // Obtener prestadores de AT
   const { data: prestadores } = await listPrestadoresByEspecialidad("Acompañante Terapeutico");
