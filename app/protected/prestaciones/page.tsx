@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { listPrestaciones, listPrestacionesParaReasignar, listPrestadoresByEspecialidad, listPrestadoresDePrestaciones, listPacientesConPrestaciones } from "@/app/protected/prestaciones/actions";
 import { PrestacionesTable, type PrestacionRow } from "@/components/prestaciones/PrestacionesTable";
 import PrestacionesReassignTable from "@/components/prestaciones/PrestacionesReassignTable";
+import { CloneCronicasGlobalButton } from "@/components/prestaciones/CloneCronicasGlobalButton";
 
 type PrestacionesPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -41,6 +42,7 @@ export default async function PrestacionesPage({ searchParams }: PrestacionesPag
     roles = (roleRows || []).map((r: any) => r.role as string);
   }
   const canCreate = roles.some((r) => ["auditor", "super_admin"].includes(r));
+  const isSuperAdmin = roles.includes("super_admin");
 
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const page = toNumber(resolvedSearchParams?.page, 1);
@@ -109,6 +111,7 @@ export default async function PrestacionesPage({ searchParams }: PrestacionesPag
         </div>
         {canCreate ? (
           <div className="flex items-center gap-2">
+            {isSuperAdmin && <CloneCronicasGlobalButton />}
             <Link href="/protected/prestaciones/crear-por-centro">
               <Button variant="outline">Crear por Centro</Button>
             </Link>
