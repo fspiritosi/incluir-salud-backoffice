@@ -17,7 +17,7 @@ import {
 } from "@tanstack/react-table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Pencil, MoreHorizontalIcon, XCircle, ChevronDown, Loader2, Repeat, Users, CheckCircle2, Trash2 } from "lucide-react";
+import { Pencil, MoreHorizontalIcon, XCircle, ChevronDown, Loader2, Repeat, Users, CheckCircle2, Trash2, CalendarClock } from "lucide-react";
 import { DataTable } from "@/components/ui/data-table";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
@@ -43,6 +43,7 @@ import {
   listPrestadoresByEspecialidad,
   reasignarPrestacionesDePaciente,
   reasignarPrestacionesSeleccionadas,
+  updatePrestacionesHorarioResidencia,
   type PacientePendienteResumen,
 } from "@/app/protected/prestaciones/actions";
 import { Badge } from "@/components/ui/badge";
@@ -69,6 +70,21 @@ type PrestacionesFilters = {
 type CheckedState = boolean | 'indeterminate';
 
 const ESTADO_OPTIONS = ["pendiente", "completada", "cancelada"] as const;
+
+const dateFormatter = new Intl.DateTimeFormat("es-AR", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
+
+const timeFormatter = new Intl.DateTimeFormat("es-AR", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+const formatDateLabel = (date: Date) => dateFormatter.format(date);
+const formatTimeLabel = (date: Date) => `${timeFormatter.format(date)} hs`;
 
 export type PrestacionRow = {
   id: string;
@@ -280,6 +296,12 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
   const [massDeleteSaving, setMassDeleteSaving] = useState(false);
   const [massDeleteError, setMassDeleteError] = useState<string | null>(null);
 
+  const [residenceScheduleOpen, setResidenceScheduleOpen] = useState(false);
+  const [residenceScheduleDate, setResidenceScheduleDate] = useState("");
+  const [residenceScheduleTime, setResidenceScheduleTime] = useState("");
+  const [residenceScheduleSaving, setResidenceScheduleSaving] = useState(false);
+  const [residenceScheduleError, setResidenceScheduleError] = useState<string | null>(null);
+
   // Reasignación por selección
   const [reassignOpen, setReassignOpen] = useState(false);
   const [reassignPrestadores, setReassignPrestadores] = useState<PrestadorOption[]>([]);
@@ -311,10 +333,10 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
   const [diaFilterSearch, setDiaFilterSearch] = useState('');
 
   const enhancedData = useMemo(() => {
-    const formatter = new Intl.DateTimeFormat("es-AR", { weekday: "long" });
+    const weekdayFormatter = new Intl.DateTimeFormat("es-AR", { weekday: "long" });
     return data.map((item) => {
       const fechaDate = new Date(item.fecha);
-      const weekday = formatter.format(fechaDate);
+      const weekday = weekdayFormatter.format(fechaDate);
       const capitalizedWeekday = weekday.charAt(0).toUpperCase() + weekday.slice(1);
       return {
         ...item,
@@ -424,8 +446,8 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
         const d = new Date(row.getValue("fecha"));
         return (
           <div className="flex flex-col leading-tight">
-            <span>{d.toLocaleDateString('es-AR')}</span>
-            <span className="text-xs text-muted-foreground">{d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} hs</span>
+            <span>{formatDateLabel(d)}</span>
+            <span className="text-xs text-muted-foreground">{formatTimeLabel(d)}</span>
           </div>
         );
       },
@@ -492,12 +514,10 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
           return <span className="text-muted-foreground">-</span>;
         }
         const date = new Date(value);
-        const time = date.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
-        const dateLabel = date.toLocaleDateString("es-AR");
         return (
           <div className="flex flex-col leading-tight">
-            <span>{time} hs</span>
-            <span className="text-xs text-muted-foreground">{dateLabel}</span>
+            <span>{formatTimeLabel(date)}</span>
+            <span className="text-xs text-muted-foreground">{formatDateLabel(date)}</span>
           </div>
         );
       },
@@ -619,7 +639,7 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
     getFilteredRowModel: getFilteredRowModel(),
     enableRowSelection: (row) => {
       const estado = (row.original.estado || '').toLowerCase();
-      return estado === 'pendiente' || estado === 'cancelada';
+      return estado === 'pendiente' || estado === 'cancelada' || estado === 'completada';
     },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
@@ -689,6 +709,8 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
   const allSamePaciente = selectedRows.every(r => r.paciente?.id === referenceRow?.paciente?.id);
   const allSameTipo = selectedRows.every(r => r.tipo_prestacion === referenceRow?.tipo_prestacion);
   const allSameCronico = selectedRows.every(r => Boolean(r.cronico) === Boolean(referenceRow?.cronico));
+  const allPendiente = selectedRows.every(r => (r.estado || '').toLowerCase() === 'pendiente');
+  const hasCompleted = selectedRows.some(r => (r.estado || '').toLowerCase() === 'completada');
   const toDay = (fecha?: string) => {
     if (!fecha) return null;
     const d = new Date(fecha);
@@ -700,13 +722,71 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
     if (Number.isNaN(d.getTime())) return null;
     return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
   };
+  const toDateInputValue = (fecha?: string) => {
+    if (!fecha) return "";
+    const d = new Date(fecha);
+    if (Number.isNaN(d.getTime())) return "";
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 10);
+  };
+  const buildIsoFromDateTime = (dateValue: string, timeValue: string) => {
+    if (!dateValue) return null;
+    const safeTime = timeValue && timeValue.includes(":") ? timeValue : `${timeValue || "00:00"}`;
+    const nextDate = new Date(`${dateValue}T${safeTime}`);
+    if (Number.isNaN(nextDate.getTime())) return null;
+    return nextDate.toISOString();
+  };
+  const getRowCentroIds = (row?: PrestacionRow) => {
+    if (!row) return [] as string[];
+    const ids = new Set<string>();
+    if (row.centro_id) ids.add(row.centro_id);
+    (row.centros_asignados || []).forEach((centro) => {
+      if (centro.id) ids.add(centro.id);
+    });
+    return Array.from(ids);
+  };
+  const sharedCentroId = (() => {
+    const baseRows = selectedRows.length
+      ? selectedRows
+      : referenceRow
+        ? [referenceRow]
+        : [];
+    const centroSets = baseRows
+      .map((row) => getRowCentroIds(row))
+      .filter((ids) => ids.length > 0);
+
+    if (!centroSets.length) {
+      return null;
+    }
+
+    let intersection = new Set(centroSets[0]);
+    for (let i = 1; i < centroSets.length; i++) {
+      const current = new Set(centroSets[i]);
+      const next = new Set<string>();
+      intersection.forEach((id) => {
+        if (current.has(id)) next.add(id);
+      });
+      intersection = next;
+      if (intersection.size === 0) return null;
+    }
+
+    const [first] = Array.from(intersection);
+    return first ?? null;
+  })();
   const referenceDay = toDay(referenceRow?.fecha);
   const referenceTime = toTime(referenceRow?.fecha);
   const allSameDay = selectedRows.every(r => toDay(r.fecha) === referenceDay);
   const allSameTime = selectedRows.every(r => toTime(r.fecha) === referenceTime);
+  const referenceTimestamp = referenceRow ? new Date(referenceRow.fecha).getTime() : null;
+  const allSameExactMoment = referenceTimestamp != null && selectedRows.every((row) => {
+    const value = new Date(row.fecha).getTime();
+    return !Number.isNaN(value) && value === referenceTimestamp;
+  });
+  const allSameCentro = Boolean(sharedCentroId);
 
   const canEditSchedule =
     selectedRows.length > 0 &&
+    allPendiente &&
     allSamePrestador &&
     allSamePaciente &&
     allSameTipo &&
@@ -714,11 +794,96 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
     allSameTime &&
     allSameCronico;
 
+  const canEditResidenceSchedule =
+    selectedRows.length > 0 &&
+    allPendiente &&
+    allSamePrestador &&
+    allSameTipo &&
+    allSameCentro &&
+    allSameExactMoment &&
+    Boolean(referenceRow?.user_id);
+
+  const residenceName = sharedCentroId
+    ? (
+        referenceRow?.centros_asignados?.find((centro) => centro.id === sharedCentroId)?.nombre
+        ?? selectedRows
+          .map((row) => row.centros_asignados?.find((centro) => centro.id === sharedCentroId)?.nombre)
+          .find(Boolean)
+        ?? null
+      )
+    : null;
+
+  const centroDiagnostics = useMemo(() => {
+    if (!selectedRows.length) {
+      return { uniqueCentroIds: [] as string[], uniqueCentroLabels: [] as string[], missingCount: 0 };
+    }
+    const ids = new Set<string>();
+    const labels = new Set<string>();
+    selectedRows.forEach((row) => {
+      const rowIds = getRowCentroIds(row);
+      if (rowIds.length === 0 && row.centros_asignados) {
+        row.centros_asignados.forEach((centro) => {
+          if (centro?.nombre) labels.add(centro.nombre);
+        });
+      }
+      rowIds.forEach((id) => {
+        ids.add(id);
+        const matchingName = row.centros_asignados?.find((centro) => centro.id === id)?.nombre;
+        if (matchingName) labels.add(matchingName);
+        else labels.add(id);
+      });
+    });
+    const missingCount = selectedRows.filter((row) => getRowCentroIds(row).length === 0).length;
+    return {
+      uniqueCentroIds: Array.from(ids),
+      uniqueCentroLabels: Array.from(labels),
+      missingCount,
+    };
+  }, [selectedRows]);
+
+  const residenceSelectionHint = useMemo(() => {
+    if (!selectedRows.length) return null;
+    if (!allPendiente) {
+      return "Solo se puede cambiar el horario de prestaciones pendientes.";
+    }
+    if (!allSamePrestador) {
+      return "Seleccioná prestaciones del mismo prestador.";
+    }
+    if (!allSameTipo) {
+      return "Todas las prestaciones deben ser del mismo tipo.";
+    }
+    if (!allSameExactMoment) {
+      return "Las prestaciones necesitan compartir la misma fecha y hora exactas.";
+    }
+    if (!sharedCentroId) {
+      if (centroDiagnostics.missingCount > 0 && centroDiagnostics.uniqueCentroIds.length === 0) {
+        return `${centroDiagnostics.missingCount} prestaciones no tienen residencia asignada. Revisá la ficha del paciente.`;
+      }
+      if (centroDiagnostics.uniqueCentroIds.length > 1) {
+        const sample = centroDiagnostics.uniqueCentroLabels.slice(0, 3).join(", ");
+        const suffix = centroDiagnostics.uniqueCentroLabels.length > 3 ? ", …" : "";
+        return `Hay ${centroDiagnostics.uniqueCentroIds.length} residencias distintas en la selección (${sample}${suffix}).`;
+      }
+      return "No pudimos detectar una residencia compartida. Verificá que cada paciente tenga un centro asignado.";
+    }
+    if (!referenceRow?.user_id) {
+      return "Las prestaciones deben tener un AT asignado.";
+    }
+    return null;
+  }, [
+    selectedRows,
+    allPendiente,
+    allSamePrestador,
+    allSameTipo,
+    allSameExactMoment,
+    sharedCentroId,
+    centroDiagnostics,
+    referenceRow?.user_id,
+  ]);
+
   const canEditCronicoOnly =
     selectedRows.length > 0 &&
     allSamePrestador &&
-    allSamePaciente &&
-    allSameCronico &&
     !canEditSchedule;
 
   const isValidSelection = canEditSchedule || canEditCronicoOnly;
@@ -726,8 +891,8 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
     if (selectedCount === 0) return false;
 
     if (!isValidSelection) {
-      if (!allSamePrestador || !allSamePaciente) {
-        setMassEditError('Seleccioná prestaciones del mismo prestador y beneficiario.');
+      if (!allSamePrestador) {
+        setMassEditError('Seleccioná prestaciones del mismo prestador.');
       } else if (!allSameCronico) {
         setMassEditError('Todos deben compartir el mismo estado crónico.');
       } else if (!allSameTipo) {
@@ -775,6 +940,62 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
     } else {
       setMassEditOpen(true); // Mostrar diálogo con error
     }
+  };
+
+  const handleOpenResidenceSchedule = () => {
+    if (!referenceRow || !canEditResidenceSchedule) {
+      return;
+    }
+    setResidenceScheduleDate(toDateInputValue(referenceRow.fecha));
+    setResidenceScheduleTime(referenceTime ?? "");
+    setResidenceScheduleError(null);
+    setResidenceScheduleOpen(true);
+  };
+
+  const handleResidenceScheduleSave = () => {
+    if (!referenceRow?.user_id || !sharedCentroId) {
+      setResidenceScheduleError("Seleccioná prestaciones con la misma residencia.");
+      return;
+    }
+
+    const targetIso = buildIsoFromDateTime(residenceScheduleDate, residenceScheduleTime || referenceTime || "");
+    if (!targetIso) {
+      setResidenceScheduleError("Ingresá una fecha y hora válidas.");
+      return;
+    }
+
+    setResidenceScheduleSaving(true);
+    setResidenceScheduleError(null);
+    startTransition(async () => {
+      try {
+        const { data, error } = await updatePrestacionesHorarioResidencia({
+          centroId: sharedCentroId!,
+          userId: referenceRow.user_id!,
+          tipoPrestacion: referenceRow.tipo_prestacion,
+          fromFecha: referenceRow.fecha,
+          toFecha: targetIso,
+        });
+
+        if (error) {
+          setResidenceScheduleError((error as any).message ?? "No se pudo actualizar el horario.");
+          return;
+        }
+
+        toast({
+          title: "Horario actualizado",
+          description: data?.updated
+            ? `${data.updated} prestaciones se movieron al nuevo horario.`
+            : "Se actualizó el horario compartido.",
+        });
+        setResidenceScheduleOpen(false);
+        setRowSelection({});
+        router.refresh();
+      } catch (e) {
+        setResidenceScheduleError("No se pudo actualizar el horario.");
+      } finally {
+        setResidenceScheduleSaving(false);
+      }
+    });
   };
 
   const handleMassEditSave = () => {
@@ -1536,6 +1757,63 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
           Editar {selectedCount} seleccionadas
         </Button>
 
+        {canEditResidenceSchedule && (
+          <>
+            <Button
+              variant="outline"
+              className="ml-2 bg-purple-50 text-purple-700 hover:bg-purple-100"
+              onClick={handleOpenResidenceSchedule}
+            >
+              <CalendarClock className="mr-2 h-4 w-4" />
+              Cambiar horario (residencia)
+            </Button>
+            <Dialog open={residenceScheduleOpen} onOpenChange={setResidenceScheduleOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Cambiar horario compartido</DialogTitle>
+                  <DialogDescription>
+                    Se actualizarán todas las prestaciones pendientes de este prestador
+                    {residenceName ? ` en ${residenceName}` : " en la residencia seleccionada"}
+                    con el mismo horario.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label>Nueva fecha</Label>
+                    <Input
+                      type="date"
+                      value={residenceScheduleDate}
+                      onChange={(e) => setResidenceScheduleDate(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label>Nueva hora</Label>
+                    <Input
+                      type="time"
+                      value={residenceScheduleTime}
+                      onChange={(e) => setResidenceScheduleTime(e.target.value)}
+                    />
+                  </div>
+                  {residenceScheduleError && (
+                    <p className="text-sm text-red-600">{residenceScheduleError}</p>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setResidenceScheduleOpen(false)}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={handleResidenceScheduleSave}
+                    disabled={residenceScheduleSaving}
+                  >
+                    {residenceScheduleSaving ? 'Guardando…' : 'Actualizar horario'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </>
+        )}
+
         <Dialog open={massEditOpen} onOpenChange={setMassEditOpen}>
           <DialogContent>
             <DialogHeader>
@@ -1639,6 +1917,7 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
           </DialogContent>
         </Dialog>
 
+          {!hasCompleted && (
           <Button
             variant="outline"
             className="ml-2 bg-amber-50 text-amber-700 hover:bg-amber-100"
@@ -1647,6 +1926,7 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
             <Repeat className="mr-2 h-4 w-4" />
             Reasignar {selectedCount} seleccionadas
           </Button>
+          )}
 
           <Dialog open={reassignOpen} onOpenChange={setReassignOpen}>
             <DialogContent>
@@ -1699,6 +1979,7 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
             </DialogContent>
           </Dialog>
 
+          {!hasCompleted && (<>
           <Dialog open={massCancelOpen} onOpenChange={setMassCancelOpen}>
             <DialogTrigger asChild>
               <Button
@@ -1759,6 +2040,7 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </>)}
 
           <Dialog open={massDeleteOpen} onOpenChange={setMassDeleteOpen}>
             <DialogTrigger asChild>
@@ -1783,6 +2065,11 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          {!canEditResidenceSchedule && residenceSelectionHint && (
+            <p className="mt-2 w-full text-right text-sm text-muted-foreground">
+              {residenceSelectionHint}
+            </p>
+          )}
         </div>
       )}
 

@@ -86,8 +86,12 @@ export async function listPacientesDisponibles(centroId: string, search?: string
   }
 
   if (search?.trim()) {
-    const term = `%${search.trim()}%`;
-    query = query.or(`nombre.ilike.${term},apellido.ilike.${term},documento.ilike.${term}`);
+    const tokens = search.trim().split(/\s+/).filter(Boolean);
+    for (const token of tokens) {
+      const term = `%${token}%`;
+      query = query.or(`nombre.ilike.${term},apellido.ilike.${term},documento.ilike.${term}`);
+    }
+    query = (query as any).limit(100);
   }
 
   const { data, error } = await query;

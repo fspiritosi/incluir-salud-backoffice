@@ -481,6 +481,94 @@ export async function reasignarPrestacionesDePaciente(
   return { data: { successIds, errors }, error: null } as const;
 }
 
+type UpdateResidenciaScheduleInput = {
+  centroId: string;
+  userId: string;
+  tipoPrestacion: string;
+  fromFecha: string;
+  toFecha: string;
+};
+
+export async function updatePrestacionesHorarioResidencia(params: UpdateResidenciaScheduleInput) {
+  const supabase = await createClient();
+
+  if (!params.centroId || !params.userId || !params.tipoPrestacion) {
+    return { data: null, error: { message: "Faltan datos para actualizar el horario" } } as const;
+  }
+
+  const fromIso = normalizeDateTimeIso(params.fromFecha);
+  const toIso = normalizeDateTimeIso(params.toFecha);
+
+  if (!fromIso || !toIso) {
+    return { data: null, error: { message: "Horario inválido" } } as const;
+  }
+
+  if (fromIso === toIso) {
+    return { data: null, error: { message: "Seleccioná un horario diferente" } } as const;
+  }
+
+  const { data: rows, error: fetchError } = await supabase
+    .from("prestaciones")
+    .select("id, paciente_id, sentido_transporte")
+    .eq("centro_id", params.centroId)
+    .eq("user_id", params.userId)
+    .eq("tipo_prestacion", params.tipoPrestacion)
+    .eq("estado", "pendiente")
+    .eq("fecha", fromIso);
+
+  if (fetchError) {
+    return { data: null, error: fetchError } as const;
+  }
+
+  if (!rows || rows.length === 0) {
+    return { data: null, error: { message: "No se encontraron prestaciones pendientes con ese horario" } } as const;
+  }
+
+  const targetDate = extractDateOnly(toIso);
+  const targetStart = `${targetDate}T00:00:00.000Z`;
+  const targetEnd = `${targetDate}T23:59:59.999Z`;
+
+  for (const row of rows) {
+    if (!row.paciente_id) continue;
+    const { data: dupData, error: dupError } = await supabase
+      .from("prestaciones")
+      .select("id")
+      .eq("paciente_id", row.paciente_id)
+      .eq("user_id", params.userId)
+      .eq("tipo_prestacion", params.tipoPrestacion)
+      .gte("fecha", targetStart)
+      .lte("fecha", targetEnd)
+      .neq("estado", "cancelada")
+      .neq("id", row.id)
+      .limit(1);
+    if (dupError) {
+      return { data: null, error: dupError } as const;
+    }
+    if ((dupData?.length || 0) > 0) {
+      return {
+        data: null,
+        error: { message: "Alguno de los pacientes ya tiene una prestación para ese día en el nuevo horario" },
+      } as const;
+    }
+  }
+
+  const { error: updateError } = await supabase
+    .from("prestaciones")
+    .update({ fecha: toIso })
+    .eq("centro_id", params.centroId)
+    .eq("user_id", params.userId)
+    .eq("tipo_prestacion", params.tipoPrestacion)
+    .eq("estado", "pendiente")
+    .eq("fecha", fromIso);
+
+  if (updateError) {
+    return { data: null, error: updateError } as const;
+  }
+
+  revalidatePath("/protected/prestaciones");
+  return { data: { updated: rows.length, from: fromIso, to: toIso }, error: null } as const;
+}
+
 type ListPrestacionesParams = {
   fechaDesde?: string;
   fechaHasta?: string;
@@ -1439,4 +1527,31 @@ export async function deletePrestacionesBulk(ids: string[]) {
   const { error } = await supabase.from('prestaciones').delete().in('id', deletable);
   if (!error) revalidatePath('/protected/prestaciones');
   return { deleted: deletable.length, skipped: ids.length - deletable.length, error };
+}
+
+export async function programarPrestacionesCronicasManual() {
+  const supabase = await createClient();
+  const { data: userRes, error: userError } = await supabase.auth.getUser();
+  if (userError || !userRes?.user?.id) {
+    return { error: 'Usuario no autenticado' };
+  }
+  const { data: roleRows } = await supabase
+    .from('v_user_roles')
+    .select('role')
+    .eq('user_id', userRes.user.id);
+  const roles = (roleRows || []).map((r: any) => r.role as string);
+  if (!roles.includes('super_admin')) {
+    return { error: 'Solo super_admin puede ejecutar esta acción' };
+  }
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) {
+    return { error: 'Faltan credenciales del servidor' };
+  }
+  const admin = createAdminClient(url, serviceKey, { auth: { persistSession: false } });
+  const { error } = await admin.rpc('programar_prestaciones_cronicas_manual');
+  if (error) return { error: error.message };
+  revalidatePath('/protected/prestaciones');
+  return { success: true };
 }
