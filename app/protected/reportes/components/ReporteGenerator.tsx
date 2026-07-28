@@ -55,6 +55,7 @@ type ReporteData = {
     monto: number | null;
     descripcion: string | null;
     estado: "pendiente" | "completada";
+    minutos: number | null;
     paciente: {
       nombre: string;
       apellido: string;
@@ -64,6 +65,7 @@ type ReporteData = {
   totales: {
     cantidad: number;
     monto: number;
+    minutos: number;
   };
 };
 
@@ -181,6 +183,14 @@ export default function ReporteGenerator({
     }
   };
 
+  const formatearDuracion = (minutos: number | null | undefined) => {
+    if (minutos === null || minutos === undefined || minutos <= 0) return 'N/A';
+    const h = Math.floor(minutos / 60);
+    const m = Math.round(minutos % 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  };
+
   const generarPDF = () => {
     if (!reporteData) return;
 
@@ -252,6 +262,7 @@ export default function ReporteGenerator({
       p.paciente ? `${p.paciente.apellido}, ${p.paciente.nombre}` : "N/A",
       p.paciente?.documento || "N/A",
       p.estado.toUpperCase(),
+      formatearDuracion(p.minutos),
       `$${(p.monto || 0).toLocaleString("es-AR")}`,
     ]);
 
@@ -273,7 +284,7 @@ export default function ReporteGenerator({
     autoTable(doc, {
       startY: 85,
       margin: { left: marginLeft, right: 15 },
-      head: [["Fecha", "Tipo", "Paciente", "DNI Paciente", "Estado", "Monto"]],
+      head: [["Fecha", "Tipo", "Paciente", "DNI Paciente", "Estado", "Duración", "Monto"]],
       body: tableData,
       theme: "grid",
       headStyles: {
@@ -286,12 +297,13 @@ export default function ReporteGenerator({
         cellPadding: 3,
       },
       columnStyles: {
-        0: { cellWidth: 25 },
-        1: { cellWidth: 35 },
-        2: { cellWidth: 40 },
-        3: { cellWidth: 25 },
-        4: { cellWidth: 28 },
-        5: { cellWidth: 25, halign: "right" },
+        0: { cellWidth: 22 },
+        1: { cellWidth: 32 },
+        2: { cellWidth: 36 },
+        3: { cellWidth: 22 },
+        4: { cellWidth: 24 },
+        5: { cellWidth: 22 },
+        6: { cellWidth: 22, halign: "right" },
       },
       didDrawPage: function (data: any) {
         const footerY = doc.internal.pageSize.height - 10;
@@ -328,9 +340,14 @@ export default function ReporteGenerator({
     doc.setFontSize(11);
     doc.text(`Total de Prestaciones: ${totales.cantidad}`, marginLeft, finalY);
     doc.text(
-      `Monto Total: $${totales.monto.toLocaleString("es-AR")}`,
+      `Total de Horas: ${formatearDuracion(totales.minutos)}`,
       marginLeft,
       finalY + 7
+    );
+    doc.text(
+      `Monto Total: $${totales.monto.toLocaleString("es-AR")}`,
+      marginLeft,
+      finalY + 14
     );
 
     // Guardar
@@ -354,7 +371,7 @@ export default function ReporteGenerator({
       ["Período:", `${fechaInicio} - ${fechaFin}`],
       [],
       ["PRESTACIONES COMPLETADAS"],
-      ["Fecha", "Tipo", "Paciente", "DNI Paciente", "Estado", "Monto"],
+      ["Fecha", "Tipo", "Paciente", "DNI Paciente", "Estado", "Duración", "Monto"],
     ];
 
     const prestacionesData = prestaciones.map((p) => [
@@ -363,12 +380,14 @@ export default function ReporteGenerator({
       p.paciente ? `${p.paciente.apellido}, ${p.paciente.nombre}` : "N/A",
       p.paciente?.documento || "N/A",
       p.estado,
+      p.minutos || 0,
       p.monto || 0,
     ]);
 
     const totalesData = [
       [],
       ["Total de Prestaciones:", totales.cantidad],
+      ["Total de Horas:", formatearDuracion(totales.minutos)],
       ["Monto Total:", totales.monto],
     ];
 
@@ -387,6 +406,7 @@ export default function ReporteGenerator({
       { wch: 35 },
       { wch: 15 },
       { wch: 15 },
+      { wch: 12 },
       { wch: 15 },
     ];
 
@@ -777,13 +797,19 @@ export default function ReporteGenerator({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div className="bg-card p-4 rounded-lg border shadow-sm dark:shadow-none">
               <p className="text-sm text-muted-foreground">
                 Total de Prestaciones
               </p>
               <p className="text-2xl font-bold">
                 {reporteData.totales.cantidad}
+              </p>
+            </div>
+            <div className="bg-card p-4 rounded-lg border shadow-sm dark:shadow-none">
+              <p className="text-sm text-muted-foreground">Total de Horas</p>
+              <p className="text-2xl font-bold">
+                {formatearDuracion(reporteData.totales.minutos)}
               </p>
             </div>
             <div className="bg-card p-4 rounded-lg border shadow-sm dark:shadow-none">
@@ -811,6 +837,9 @@ export default function ReporteGenerator({
                     Estado
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
+                    Duración
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
                     Monto
                   </th>
                 </tr>
@@ -830,6 +859,9 @@ export default function ReporteGenerator({
                         : "N/A"}
                     </td>
                     <td className="px-4 py-3 text-sm">{p.estado}</td>
+                    <td className="px-4 py-3 text-sm">
+                      {formatearDuracion(p.minutos)}
+                    </td>
                     <td className="px-4 py-3 text-sm">
                       ${(p.monto || 0).toLocaleString("es-AR")}
                     </td>

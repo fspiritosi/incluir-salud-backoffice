@@ -53,7 +53,6 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
   const { toast } = useToast();
   
   const [fObra, setFObra] = useState('');
-  const [fPrestador, setFPrestador] = useState('');
   const [prestadoresFiltrados, setPrestadoresFiltrados] = useState<{ id: string; apellido: string; nombre: string; documento?: string }[]>([]);
   const [pacOpts, setPacOpts] = useState<ComboboxOption[]>([]);
   const [pacLoading, setPacLoading] = useState(false);
@@ -379,89 +378,69 @@ export function PrestacionForm({ initialData, isEditing = false, pacientes, obra
             )}
           />
 
-          {(tipoPrestacion === 'Transporte' || tipoPrestacion === 'Acompañante Terapeutico') && (
-            <FormField
-              control={form.control}
-              name="centro_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Centro{tipoPrestacion === 'Transporte' ? ' *' : ''}</FormLabel>
-                  <Combobox
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    disabled={loading}
-                    placeholder={centros.length ? 'Seleccionar centro' : 'No hay centros activos'}
-                    searchPlaceholder="Buscar centro..."
-                    emptyText="Sin resultados"
-                    options={centros.map((c): ComboboxOption => ({
-                      value: c.id,
-                      label: c.nombre,
-                      searchText: c.nombre,
-                    }))}
-                  />
-                  {(form.formState.isSubmitted || form.getFieldState('centro_id').isTouched) && <FormMessage />}
-                </FormItem>
-              )}
-            />
-          )}
+          <FormField
+            control={form.control}
+            name="centro_id"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Centro{tipoPrestacion === 'Transporte' ? ' *' : ''}</FormLabel>
+                <Combobox
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  disabled={loading || (tipoPrestacion !== 'Transporte' && tipoPrestacion !== 'Acompañante Terapeutico')}
+                  placeholder={
+                    !tipoPrestacion
+                      ? 'Seleccioná tipo primero'
+                      : tipoPrestacion !== 'Transporte' && tipoPrestacion !== 'Acompañante Terapeutico'
+                      ? 'No aplica para este tipo'
+                      : centros.length
+                      ? 'Seleccionar centro'
+                      : 'No hay centros activos'
+                  }
+                  searchPlaceholder="Buscar centro..."
+                  emptyText="Sin resultados"
+                  options={centros.map((c): ComboboxOption => ({
+                    value: c.id,
+                    label: c.nombre,
+                    searchText: c.nombre,
+                  }))}
+                />
+                {(form.formState.isSubmitted || form.getFieldState('centro_id').isTouched) && <FormMessage />}
+              </FormItem>
+            )}
+          />
           <FormField
             control={form.control}
             name="user_id"
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Prestador</FormLabel>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={loading || !tipoPrestacion}
-                      className="w-full justify-between h-10 rounded-md border border-input bg-background px-3 text-sm font-normal hover:bg-background ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <span className={field.value ? '' : 'text-muted-foreground'}>{(() => {
-                        if (!tipoPrestacion) return 'Seleccioná tipo primero';
-                        const pr = prestadoresFiltrados.find(p => p.id === field.value);
-                        return pr ? `${pr.nombre} ${pr.apellido}${pr.documento ? ' - DNI ' + pr.documento : ''}` : 'Seleccionar prestador';
-                      })()}</span>
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent className="w-80 p-2">
-                    <Input
-                      placeholder="Buscar prestador (Nombre Apellido o DNI)"
-                      value={fPrestador}
-                      onChange={(e) => setFPrestador(e.target.value)}
-                      className="mb-2"
-                    />
-                    {prestadoresFiltrados
-                      .filter(p => {
-                        const full = `${p.apellido} ${p.nombre}`.toLowerCase();
-                        const doc = (p.documento || '').toLowerCase();
-                        const q = fPrestador.toLowerCase();
-                        return full.includes(q) || doc.includes(q);
-                      })
-                      .map((p) => (
-                        <DropdownMenuItem
-                          key={p.id}
-                          onClick={() => {
-                            field.onChange(p.id);
-                          }}
-                        >
-                          {p.nombre} {p.apellido}{p.documento ? ` - DNI ${p.documento}` : ''}
-                        </DropdownMenuItem>
-                      ))}
-                    {tipoPrestacion && prestadoresFiltrados.filter(p => {
-                      const full = `${p.apellido} ${p.nombre}`.toLowerCase();
-                      const doc = (p.documento || '').toLowerCase();
-                      const q = fPrestador.toLowerCase();
-                      return full.includes(q) || doc.includes(q);
-                    }).length === 0 && (
-                      <div className="px-2 py-6 text-sm text-muted-foreground">
-                        {fPrestador ? 'No hay resultados' : 'No hay prestadores para este tipo'}
-                      </div>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {tipoPrestacion ? (
+                  <Combobox
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    disabled={loading}
+                    placeholder={
+                      prestadoresFiltrados.length === 0
+                        ? 'No hay prestadores activos para este tipo'
+                        : 'Seleccionar prestador'
+                    }
+                    searchPlaceholder="Buscar prestador (Nombre Apellido o DNI)"
+                    emptyText="Sin resultados"
+                    options={prestadoresFiltrados
+                      .filter((p) => p.apellido || p.nombre)
+                      .map((p): ComboboxOption => ({
+                        value: p.id,
+                        label: `${p.apellido}, ${p.nombre}${p.documento ? ` - DNI ${p.documento}` : ''}`,
+                        searchText: `${p.apellido} ${p.nombre} ${p.documento || ''}`,
+                      }))}
+                  />
+                ) : (
+                  <div className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 text-sm text-muted-foreground cursor-not-allowed">
+                    <span>Seleccioná tipo primero</span>
+                    <ChevronDown className="h-4 w-4 opacity-50" />
+                  </div>
+                )}
                 <FormMessage />
               </FormItem>
             )}

@@ -643,7 +643,7 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
 
   const dataQuery = applyFilters(
     supabase.from("prestaciones")
-      .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico, sentido_transporte, completed_at, centro_id")
+      .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico, sentido_transporte, completed_at, started_at, completado_por, centro_id, ubicacion_cierre, distancia_validacion, notas")
       .order("fecha", { ascending: false })
   ).range(offset, offset + pageSize - 1);
 
@@ -651,7 +651,7 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
     countQuery,
     dataQuery,
   ]);
-  const prestaciones = rawPrestaciones as Array<{ id: string; tipo_prestacion: string; fecha: string; estado: string | null; monto: number | null; user_id: string | null; paciente_id: string | null; cronico: boolean | null; sentido_transporte: string | null; completed_at: string | null; centro_id: string | null; }> | null;
+  const prestaciones = rawPrestaciones as Array<{ id: string; tipo_prestacion: string; fecha: string; estado: string | null; monto: number | null; user_id: string | null; paciente_id: string | null; cronico: boolean | null; sentido_transporte: string | null; completed_at: string | null; started_at: string | null; completado_por: string | null; centro_id: string | null; ubicacion_cierre: any | null; distancia_validacion: number | null; notas: string | null; }> | null;
 
   if (error) {
     console.error("Error listando prestaciones:", error);
@@ -666,6 +666,7 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
 
   const pacienteIds = Array.from(new Set(prestaciones.map((p) => p.paciente_id).filter(Boolean)));
   const prestadorIds = Array.from(new Set(prestaciones.map((p) => p.user_id).filter(Boolean)));
+  const completadoPorIds = Array.from(new Set(prestaciones.map((p) => p.completado_por).filter(Boolean)));
 
   const { data: pacientes } = await supabase
     .from("pacientes")
@@ -676,6 +677,11 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
     .from("profiles")
     .select("id, nombre, apellido, documento")
     .in("id", prestadorIds);
+
+  const { data: completadores } = await supabase
+    .from("profiles")
+    .select("id, nombre, apellido, documento")
+    .in("id", completadoPorIds);
 
   type PacienteCentroRow = {
     paciente_id: string | null;
@@ -694,6 +700,7 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
 
   const pacientesMap = new Map((pacientes || []).map((p) => [p.id, p]));
   const prestadoresMap = new Map((prestadores || []).map((p) => [p.id, p]));
+  const completadoresMap = new Map((completadores || []).map((p) => [p.id, p]));
   const pacienteCentrosMap = new Map<string, { id: string; nombre: string }[]>();
 
   pacienteCentros.forEach((row) => {
@@ -722,9 +729,15 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
     cronico: p.cronico,
     sentido_transporte: p.sentido_transporte ?? null,
     completed_at: p.completed_at ?? null,
+    started_at: p.started_at ?? null,
+    completado_por: p.completado_por ?? null,
     centro_id: p.centro_id ?? null,
+    ubicacion_cierre: p.ubicacion_cierre ?? null,
+    distancia_validacion: p.distancia_validacion ?? null,
+    notas: p.notas ?? null,
     paciente: p.paciente_id ? pacientesMap.get(p.paciente_id) || null : null,
     prestador: p.user_id ? prestadoresMap.get(p.user_id) || null : null,
+    completador: p.completado_por ? completadoresMap.get(p.completado_por) || null : null,
     centros_asignados: p.paciente_id ? pacienteCentrosMap.get(p.paciente_id) ?? [] : [],
   }));
 
@@ -737,11 +750,17 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
       monto: number | null;
       sentido_transporte?: string | null;
       completed_at?: string | null;
+      started_at?: string | null;
+      completado_por?: string | null;
       user_id?: string | null;
       centros_asignados?: { id: string; nombre: string }[];
       centro_id?: string | null;
+      ubicacion_cierre?: any | null;
+      distancia_validacion?: number | null;
+      notas?: string | null;
       paciente: { id: string; nombre: string; apellido: string; documento: string } | null;
       prestador: { id: string; nombre: string; apellido: string; documento?: string } | null;
+      completador: { id: string; nombre: string; apellido: string; documento?: string } | null;
     }> | null,
     error: null,
     pagination: {
@@ -904,17 +923,24 @@ export async function updatePrestacion(id: string, values: Partial<PrestacionInp
 
   const { data: existing } = await supabase
     .from("prestaciones")
-    .select("estado, completed_at")
+    .select("estado, completed_at, completado_por")
     .eq("id", id)
     .single();
 
+  const { data: { user } } = await supabase.auth.getUser();
+
   let completedAtUpdate: string | null | undefined;
+  let completadoPorUpdate: string | null | undefined;
   if (values.estado === 'completada') {
     completedAtUpdate = existing?.estado === 'completada'
       ? existing?.completed_at ?? null
       : new Date().toISOString();
+    completadoPorUpdate = existing?.estado === 'completada'
+      ? existing?.completado_por ?? null
+      : user?.id ?? null;
   } else if (values.estado && values.estado !== 'completada') {
     completedAtUpdate = null;
+    completadoPorUpdate = null;
   }
 
   const payload: Record<string, any> = {};
@@ -945,7 +971,10 @@ export async function updatePrestacion(id: string, values: Partial<PrestacionInp
   if (completedAtUpdate !== undefined) {
     payload.completed_at = completedAtUpdate;
   }
-  
+  if (completadoPorUpdate !== undefined) {
+    payload.completado_por = completadoPorUpdate;
+  }
+
   const { data, error } = await supabase
     .from("prestaciones")
     .update(payload)
@@ -1299,9 +1328,10 @@ export async function cancelPrestacionAction(formData: FormData): Promise<void> 
 
 export async function completePrestacion(id: string) {
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
   const { data, error } = await supabase
     .from('prestaciones')
-    .update({ estado: 'completada', completed_at: new Date().toISOString() })
+    .update({ estado: 'completada', completed_at: new Date().toISOString(), completado_por: user?.id ?? null })
     .eq('id', id).neq('estado', 'completada').select('id').single();
   if (!error) revalidatePath('/protected/prestaciones');
   return { data, error } as const;
@@ -1509,10 +1539,11 @@ export async function deletePrestacion(id: string) {
 
 export async function completePrestacionesBulk(ids: string[]) {
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
   const now = new Date().toISOString();
   let failed = 0;
   for (const id of ids) {
-    const { error } = await supabase.from('prestaciones').update({ estado: 'completada', completed_at: now }).eq('id', id).neq('estado', 'completada');
+    const { error } = await supabase.from('prestaciones').update({ estado: 'completada', completed_at: now, completado_por: user?.id ?? null }).eq('id', id).neq('estado', 'completada');
     if (error) failed++;
   }
   revalidatePath('/protected/prestaciones');

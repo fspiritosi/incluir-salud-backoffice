@@ -17,7 +17,7 @@ import {
 } from "@tanstack/react-table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Pencil, MoreHorizontalIcon, XCircle, ChevronDown, Loader2, Repeat, Users, CheckCircle2, Trash2, CalendarClock } from "lucide-react";
+import { Pencil, MoreHorizontalIcon, XCircle, ChevronDown, Loader2, Repeat, Users, CheckCircle2, Trash2, CalendarClock, MapPin } from "lucide-react";
 import { DataTable } from "@/components/ui/data-table";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
@@ -96,14 +96,24 @@ export type PrestacionRow = {
   sentido_transporte?: string | null;
   user_id?: string | null;
   completed_at?: string | null;
+  started_at?: string | null;
   centros_asignados?: { id: string; nombre: string }[];
   centro_id?: string | null;
+  ubicacion_cierre?: any | null;
+  distancia_validacion?: number | null;
   prestador?: {
     id: string;
     nombre: string;
     apellido: string;
     documento?: string;
   } | null;
+  completador?: {
+    id: string;
+    nombre: string;
+    apellido: string;
+    documento?: string;
+  } | null;
+  notas?: string | null;
   paciente?: {
     id: string;
     nombre: string;
@@ -130,6 +140,70 @@ type PrestadorOption = {
 const normalizeStringArray = (values: string[] = []) =>
   Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
+function parseWKBPoint(wkbHex: string): { lat: number; lng: number } | null {
+  try {
+    const coordsHex = wkbHex.substring(18);
+    const lngHex = coordsHex.substring(0, 16);
+    const latHex = coordsHex.substring(16, 32);
+    const lngBuffer = new ArrayBuffer(8);
+    const lngView = new DataView(lngBuffer);
+    for (let i = 0; i < 8; i++) {
+      lngView.setUint8(i, parseInt(lngHex.substr(i * 2, 2), 16));
+    }
+    const lng = lngView.getFloat64(0, true);
+    const latBuffer = new ArrayBuffer(8);
+    const latView = new DataView(latBuffer);
+    for (let i = 0; i < 8; i++) {
+      latView.setUint8(i, parseInt(latHex.substr(i * 2, 2), 16));
+    }
+    const lat = latView.getFloat64(0, true);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  } catch {
+    return null;
+  }
+}
+
+function parseUbicacion(ubicacion: any): { lat: number; lng: number } | null {
+  if (!ubicacion) return null;
+  if (typeof ubicacion === 'string') {
+    if (/^[0-9A-F]+$/i.test(ubicacion)) {
+      return parseWKBPoint(ubicacion);
+    }
+    const match = ubicacion.match(/POINT\(([^)]+)\)/);
+    if (match && match[1]) {
+      const [lng, lat] = match[1].split(' ').map(Number);
+      if (!Number.isNaN(lat) && !Number.isNaN(lng)) return { lat, lng };
+    }
+  }
+  if (typeof ubicacion === 'object' && ubicacion !== null) {
+    if (Array.isArray(ubicacion.coordinates)) {
+      const [lng, lat] = ubicacion.coordinates;
+      if (typeof lat === 'number' && typeof lng === 'number') return { lat, lng };
+    }
+    if (typeof ubicacion.lat === 'number' && typeof ubicacion.lng === 'number') {
+      return { lat: ubicacion.lat, lng: ubicacion.lng };
+    }
+    if (typeof ubicacion.latitude === 'number' && typeof ubicacion.longitude === 'number') {
+      return { lat: ubicacion.latitude, lng: ubicacion.longitude };
+    }
+  }
+  return null;
+}
+
+function esCerradaAnticipadamente(prestacion: PrestacionRow) {
+  if (prestacion.estado?.toLowerCase() !== "completada") return false;
+  if (!prestacion.started_at || !prestacion.completed_at) return false;
+  const inicio = new Date(prestacion.started_at).getTime();
+  const fin = new Date(prestacion.completed_at).getTime();
+  if (isNaN(inicio) || isNaN(fin) || fin < inicio) return false;
+  const duracionMin = Math.floor((fin - inicio) / (1000 * 60));
+  const tipo = prestacion.tipo_prestacion.toLowerCase();
+  if (tipo.includes("kine")) return duracionMin < 30;
+  if (tipo.includes("acompañante") || tipo.includes("acomp")) return duracionMin < 40;
+  return false;
+}
+
 function RowActionsCell({ prestacion, canWrite, loading }: {
   prestacion: PrestacionRow;
   canWrite: boolean;
@@ -139,6 +213,8 @@ function RowActionsCell({ prestacion, canWrite, loading }: {
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [openDialog, setOpenDialog] = useState<'completar' | 'cancelar' | 'eliminar' | null>(null);
+  const [openLocation, setOpenLocation] = useState(false);
+  const coords = useMemo(() => parseUbicacion(prestacion.ubicacion_cierre), [prestacion.ubicacion_cierre]);
   const estado = (prestacion.estado || '').toLowerCase();
 
   if (!canWrite || loading) {
@@ -151,17 +227,54 @@ function RowActionsCell({ prestacion, canWrite, loading }: {
 
   const esPendiente = estado === 'pendiente';
   const esCancelada = estado === 'cancelada';
+  const esCompletada = estado === 'completada';
 
-  if (!esPendiente && !esCancelada) return null;
+  if (!esPendiente && !esCancelada && !esCompletada) return null;
+
+  const formatDateTime = (value: string | null | undefined) => {
+    if (!value) return '-';
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return '-';
+    return `${dateFormatter.format(d)} ${timeFormatter.format(d)} hs`;
+  };
+
+  const duracionMin = (() => {
+    if (!prestacion.started_at || !prestacion.completed_at) return null;
+    const inicio = new Date(prestacion.started_at).getTime();
+    const fin = new Date(prestacion.completed_at).getTime();
+    if (isNaN(inicio) || isNaN(fin) || fin < inicio) return null;
+    return Math.floor((fin - inicio) / (1000 * 60));
+  })();
+
+  const duracion = duracionMin == null ? null : (() => {
+    if (duracionMin < 60) return `${duracionMin} min`;
+    const horas = Math.floor(duracionMin / 60);
+    const minutos = duracionMin % 60;
+    return `${horas}h ${minutos}min`;
+  })();
+
+  const pinColorClass = (() => {
+    if (!coords) return 'text-gray-400';
+    if (duracionMin == null) return 'text-blue-600';
+    const tipo = prestacion.tipo_prestacion.toLowerCase();
+    const umbral = tipo.includes('kine') ? 30 : tipo.includes('acompañante') ? 40 : null;
+    if (umbral == null) return 'text-blue-600';
+    return duracionMin < umbral ? 'text-yellow-500' : 'text-blue-600';
+  })();
 
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button size="icon" variant="outline">
-            <MoreHorizontalIcon className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
+      {esCompletada ? (
+        <Button size="icon" variant="outline" onClick={() => setOpenLocation(true)} title={coords ? "Ver ubicación de cierre" : "Sin ubicación registrada"}>
+          <MapPin className={`h-4 w-4 ${pinColorClass}`} />
+        </Button>
+      ) : (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon" variant="outline">
+              <MoreHorizontalIcon className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           {esPendiente && (
             <>
@@ -181,11 +294,21 @@ function RowActionsCell({ prestacion, canWrite, loading }: {
               </DropdownMenuItem>
             </>
           )}
+          {coords && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Ubicación</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => setOpenLocation(true)}>
+                <MapPin className="mr-2 h-4 w-4" /> Ver ubicación
+              </DropdownMenuItem>
+            </>
+          )}
           <DropdownMenuItem className="text-red-600 focus:text-red-600 font-medium" onSelect={() => setOpenDialog('eliminar')}>
             <Trash2 className="mr-2 h-4 w-4" /> Eliminar permanentemente
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
 
       <Dialog open={openDialog === 'completar'} onOpenChange={(o) => { if (!o) setOpenDialog(null); }}>
         <DialogContent>
@@ -252,6 +375,84 @@ function RowActionsCell({ prestacion, canWrite, loading }: {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={openLocation} onOpenChange={setOpenLocation}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Detalle de validación</DialogTitle>
+            <DialogDescription>
+              {prestacion.paciente
+                ? `${prestacion.paciente.apellido}, ${prestacion.paciente.nombre}`
+                : 'Paciente no asignado'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">AT:</span>
+              <span>
+                {prestacion.prestador
+                  ? `${prestacion.prestador.apellido ?? ''} ${prestacion.prestador.nombre ?? ''}`.trim() || prestacion.prestador.id
+                  : '-'}
+              </span>
+            </div>
+            {prestacion.completador && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Completado por:</span>
+                <span>
+                  {`${prestacion.completador.apellido ?? ''} ${prestacion.completador.nombre ?? ''}`.trim() || prestacion.completador.id}
+                  {prestacion.completador.id !== prestacion.user_id && (
+                    <span className="ml-2 text-xs text-orange-600">(backoffice)</span>
+                  )}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Tipo:</span>
+              <span className="capitalize">{prestacion.tipo_prestacion}</span>
+            </div>
+            {prestacion.notas && (
+              <div className="flex flex-col gap-1">
+                <span className="text-muted-foreground">Notas:</span>
+                <span className="whitespace-pre-wrap text-right">{prestacion.notas}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Inicio:</span>
+              <span>{formatDateTime(prestacion.started_at)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Cierre:</span>
+              <span>{formatDateTime(prestacion.completed_at)}</span>
+            </div>
+            {prestacion.started_at && prestacion.completed_at && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Duración:</span>
+                <span>{duracion ?? 'No registrada'}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Distancia:</span>
+              <span>{prestacion.distancia_validacion != null ? `${prestacion.distancia_validacion} m` : '-'}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Ubicación:</span>
+              <div className="mt-1">
+                {coords ? (
+                  <span className="block leading-relaxed">
+                    <span>Lat: {coords.lat}, Lng: {coords.lng}</span><br />
+                    <a href={`https://www.google.com/maps?q=${coords.lat},${coords.lng}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                      Ver en Google Maps
+                    </a>
+                  </span>
+                ) : 'No hay ubicación registrada.'}
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="sm:justify-end">
+            <Button type="button" variant="outline" onClick={() => setOpenLocation(false)}>Cerrar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -265,7 +466,6 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [isPaginationPending, startPaginationTransition] = useTransition();
-  const isServerPaginated = Boolean(pagination);
   const totalPages = pagination ? Math.max(1, Math.ceil(pagination.total / pagination.pageSize || 1)) : 1;
 
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -331,6 +531,8 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
   const [estadoFilterSearch, setEstadoFilterSearch] = useState('');
   const [estadoSelected, setEstadoSelected] = useState<string[]>(normalizeStringArray(filters?.estados));
   const [diaFilterSearch, setDiaFilterSearch] = useState('');
+  const [soloAlertas, setSoloAlertas] = useState(false);
+  const isServerPaginated = Boolean(pagination) && !soloAlertas;
 
   const enhancedData = useMemo(() => {
     const weekdayFormatter = new Intl.DateTimeFormat("es-AR", { weekday: "long" });
@@ -344,6 +546,11 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
       };
     });
   }, [data]);
+
+  const displayData = useMemo(() => {
+    if (!soloAlertas) return enhancedData;
+    return enhancedData.filter(esCerradaAnticipadamente);
+  }, [enhancedData, soloAlertas]);
 
   const tipoOptions = useMemo(() => {
     const set = new Set<string>();
@@ -631,7 +838,7 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
   };
 
   const table = useReactTable({
-    data: enhancedData,
+    data: displayData,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -1729,6 +1936,16 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
+        <div className="flex items-center gap-2 ml-auto">
+          <Switch
+            id="solo-alertas"
+            checked={soloAlertas}
+            onCheckedChange={setSoloAlertas}
+          />
+          <Label htmlFor="solo-alertas" className="text-sm cursor-pointer">
+            Solo cerradas anticipadamente
+          </Label>
+        </div>
       </div>
 
       <DataTable table={table} isLoading={loading} />
