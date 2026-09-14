@@ -1,6 +1,14 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
+
+function getAdminSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) return null as any;
+  return createAdminClient(url, serviceKey);
+}
 
 export type PrestadorResumen = {
   id: string;
@@ -35,7 +43,7 @@ export async function getPrestacionesReporte(
   // Consulta corregida con AND para rango exacto
   let query = supabase
     .from("prestaciones")
-    .select(`id, tipo_prestacion, fecha, monto, descripcion, paciente_id, estado, 
+    .select(`id, tipo_prestacion, fecha, monto, descripcion, paciente_id, estado, started_at, completed_at,
              pacientes(nombre, apellido, documento)`)
     .eq("user_id", prestadorId)
     .gte("fecha", `${fechaInicio}T00:00:00-03:00`)
@@ -73,13 +81,24 @@ export async function getPrestacionesReporte(
     pacientesMap = new Map((pacientes || []).map((p) => [p.id, p]));
   }
 
-  const prestacionesConPaciente = prestaciones?.map((p) => ({
-    ...p,
-    paciente: p.paciente_id ? pacientesMap.get(p.paciente_id) || null : null,
-  }));
+  const prestacionesConPaciente = (prestaciones || []).map((p: any) => {
+    const minutos =
+      p.started_at && p.completed_at
+        ? Math.round((new Date(p.completed_at).getTime() - new Date(p.started_at).getTime()) / (1000 * 60))
+        : null;
+    return {
+      ...p,
+      minutos,
+      paciente: p.paciente_id ? pacientesMap.get(p.paciente_id) || null : null,
+    };
+  });
 
-  const totalPrestaciones = prestaciones?.length || 0;
-  const montoTotal = prestaciones?.reduce((sum, p) => sum + (p.monto || 0), 0) || 0;
+  const totalPrestaciones = prestacionesConPaciente.length;
+  const montoTotal = prestacionesConPaciente.reduce(
+    (sum, p) => (p.estado !== 'cancelada' ? sum + (p.monto || 0) : sum),
+    0
+  );
+  const minutosTotal = prestacionesConPaciente.reduce((sum, p) => sum + (p.minutos || 0), 0);
 
   return {
     data: {
@@ -88,6 +107,7 @@ export async function getPrestacionesReporte(
       totales: {
         cantidad: totalPrestaciones,
         monto: montoTotal,
+        minutos: minutosTotal,
       },
     },
     error: null,
@@ -109,7 +129,9 @@ export async function getPrestadores() {
     return [];
   }
 
-  return data || [];
+  return (data || []).filter(
+    (p: any) => p.nombre?.trim() && p.apellido?.trim()
+  );
 }
 
 export async function getPacientesDePrestador(prestadorId: string) {
@@ -178,14 +200,16 @@ export async function getPrestadoresDeBeneficiario(beneficiarioId: string) {
     return [] as PrestadorResumen[];
   }
 
-  return (prestadores || []).map((p) => ({
-    id: p.id,
-    nombre: p.nombre,
-    apellido: p.apellido,
-    documento: p.documento ?? null,
-    email: (p as any).email ?? null,
-    telefono: (p as any).telefono ?? null,
-  })) satisfies PrestadorResumen[];
+  return (prestadores || [])
+    .filter((p: any) => p.nombre?.trim() && p.apellido?.trim())
+    .map((p) => ({
+      id: p.id,
+      nombre: p.nombre,
+      apellido: p.apellido,
+      documento: p.documento ?? null,
+      email: (p as any).email ?? null,
+      telefono: (p as any).telefono ?? null,
+    })) satisfies PrestadorResumen[];
 }
 
 export async function getTiposPrestacionDeBeneficiario(beneficiarioId: string, prestadorIds?: string[]) {
@@ -236,7 +260,7 @@ export async function getPrestacionesReporteBeneficiario(
 
   let query = supabase
     .from('prestaciones')
-    .select('id, tipo_prestacion, fecha, monto, descripcion, estado, user_id')
+    .select('id, tipo_prestacion, fecha, monto, descripcion, estado, user_id, started_at, completed_at')
     .eq('paciente_id', beneficiarioId)
     .gte('fecha', `${fechaInicio}T00:00:00-03:00`)
     .lte('fecha', `${fechaFin}T23:59:59-03:00`)
@@ -273,13 +297,24 @@ export async function getPrestacionesReporteBeneficiario(
     prestadoresMap = new Map((prestadores || []).map((p) => [p.id, p]));
   }
 
-  const prestacionesConPrestador = prestaciones?.map((p) => ({
-    ...p,
-    prestador: p.user_id ? prestadoresMap.get(p.user_id) || null : null,
-  }));
+  const prestacionesConPrestador = (prestaciones || []).map((p: any) => {
+    const minutos =
+      p.started_at && p.completed_at
+        ? Math.round((new Date(p.completed_at).getTime() - new Date(p.started_at).getTime()) / (1000 * 60))
+        : null;
+    return {
+      ...p,
+      minutos,
+      prestador: p.user_id ? prestadoresMap.get(p.user_id) || null : null,
+    };
+  });
 
-  const totalPrestaciones = prestaciones?.length || 0;
-  const montoTotal = prestaciones?.reduce((sum, p) => sum + (p.monto || 0), 0) || 0;
+  const totalPrestaciones = prestacionesConPrestador.length;
+  const montoTotal = prestacionesConPrestador.reduce(
+    (sum, p) => (p.estado !== 'cancelada' ? sum + (p.monto || 0) : sum),
+    0
+  );
+  const minutosTotal = prestacionesConPrestador.reduce((sum, p) => sum + (p.minutos || 0), 0);
 
   return {
     data: {
@@ -288,6 +323,7 @@ export async function getPrestacionesReporteBeneficiario(
       totales: {
         cantidad: totalPrestaciones,
         monto: montoTotal,
+        minutos: minutosTotal,
       },
     },
     error: null,
@@ -313,4 +349,189 @@ export async function getTiposPrestacionDePrestador(prestadorId: string, pacient
   ) as string[];
   tipos.sort((a, b) => a.localeCompare(b));
   return tipos;
+}
+
+export type CentroResumen = {
+  id: string;
+  nombre: string;
+};
+
+export async function getCentros(): Promise<CentroResumen[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('centros')
+    .select('id, nombre')
+    .order('nombre', { ascending: true });
+
+  if (error) {
+    console.error('Error obteniendo centros:', error);
+    return [];
+  }
+  return (data || []) as CentroResumen[];
+}
+
+export type DiaResidencia = {
+  fecha: string;
+  minutos: number;
+  entrada_at: string | null;
+  salida_at: string | null;
+};
+
+export type PacienteResidencia = {
+  id: string;
+  nombre: string;
+  apellido: string;
+  documento: string | null;
+};
+
+export type ResidenciaReporte = {
+  centro: CentroResumen;
+  prestador: PrestadorResumen;
+  pacientes: PacienteResidencia[];
+  dias: DiaResidencia[];
+  totalMinutos: number;
+};
+
+export async function getReporteResidencia(
+  centroId: string,
+  prestadorId: string,
+  fechaInicio: string,
+  fechaFin: string
+) {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const isAdmin = user?.user_metadata?.tipo_usuario === 'incluir salud';
+  const jornadasClient = isAdmin ? getAdminSupabase() : supabase;
+
+  if (!isAdmin && user?.id !== prestadorId) {
+    return { data: null, error: { message: 'No autorizado' } };
+  }
+
+  const { data: centro, error: centroError } = await supabase
+    .from('centros')
+    .select('id, nombre')
+    .eq('id', centroId)
+    .single();
+
+  if (centroError || !centro) {
+    console.error('Error obteniendo centro:', centroError);
+    return { data: null, error: centroError };
+  }
+
+  const { data: prestador, error: prestadorError } = await supabase
+    .from('profiles')
+    .select('id, nombre, apellido, documento, email, telefono')
+    .eq('id', prestadorId)
+    .single();
+
+  if (prestadorError || !prestador) {
+    console.error('Error obteniendo prestador:', prestadorError);
+    return { data: null, error: prestadorError };
+  }
+
+  const { data: jornadas, error: jornadasError } = await jornadasClient
+    .from('jornadas_residencia')
+    .select('fecha, entrada_at, salida_at')
+    .eq('centro_id', centroId)
+    .eq('user_id', prestadorId)
+    .eq('estado', 'completada')
+    .gte('fecha', fechaInicio)
+    .lte('fecha', fechaFin)
+    .order('fecha', { ascending: true });
+
+  if (jornadasError) {
+    console.error('Error obteniendo jornadas:', jornadasError);
+    return { data: null, error: jornadasError };
+  }
+
+  const diasDetalleMap = new Map<string, { minutos: number; entrada_at: string | null; salida_at: string | null }>();
+  let totalMinutos = 0;
+  for (const j of (jornadas || []) as any[]) {
+    if (j.entrada_at && j.salida_at) {
+      const minutos = Math.floor(
+        (new Date(j.salida_at).getTime() - new Date(j.entrada_at).getTime()) / (1000 * 60)
+      );
+      const fechaKey = j.fecha as string;
+      const prev = diasDetalleMap.get(fechaKey) ?? { minutos: 0, entrada_at: null, salida_at: null };
+      const entradaMs = new Date(j.entrada_at as string).getTime();
+      const salidaMs = new Date(j.salida_at as string).getTime();
+      if (!prev.entrada_at || entradaMs < new Date(prev.entrada_at).getTime()) {
+        prev.entrada_at = j.entrada_at as string;
+      }
+      if (!prev.salida_at || salidaMs > new Date(prev.salida_at).getTime()) {
+        prev.salida_at = j.salida_at as string;
+      }
+      prev.minutos += minutos;
+      diasDetalleMap.set(fechaKey, prev);
+      totalMinutos += minutos;
+    }
+  }
+
+  const { data: prestaciones, error: prestacionesError } = await supabase
+    .from('prestaciones')
+    .select('fecha, paciente_id, pacientes(id, nombre, apellido, documento)')
+    .eq('centro_id', centroId)
+    .eq('user_id', prestadorId)
+    .eq('estado', 'completada')
+    .gte('fecha', `${fechaInicio}T00:00:00-03:00`)
+    .lte('fecha', `${fechaFin}T23:59:59-03:00`)
+    .not('paciente_id', 'is', null);
+
+  if (prestacionesError) {
+    console.error('Error obteniendo prestaciones del centro:', prestacionesError);
+    return { data: null, error: prestacionesError };
+  }
+
+  const pacientesMap = new Map<string, PacienteResidencia>();
+  const prestacionesFechas = new Set<string>();
+  for (const p of (prestaciones || []) as any[]) {
+    const pac = p.pacientes;
+    const fechaKey = p.fecha ? (p.fecha as string).slice(0, 10) : null;
+    if (fechaKey) prestacionesFechas.add(fechaKey);
+    if (pac && !pacientesMap.has(pac.id)) {
+      pacientesMap.set(pac.id, {
+        id: pac.id,
+        nombre: pac.nombre,
+        apellido: pac.apellido,
+        documento: pac.documento,
+      });
+    }
+  }
+
+  const dias: DiaResidencia[] = Array.from(diasDetalleMap.entries())
+    .map(([fecha, detalle]) => ({ fecha, ...detalle }))
+    .concat(
+      Array.from(prestacionesFechas)
+        .filter((fecha) => !diasDetalleMap.has(fecha))
+        .map((fecha) => ({ fecha, minutos: 0, entrada_at: null, salida_at: null }))
+    )
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+  const pacientes = Array.from(pacientesMap.values()).sort((a, b) => {
+    const cmp = a.apellido.localeCompare(b.apellido);
+    if (cmp !== 0) return cmp;
+    return a.nombre.localeCompare(b.nombre);
+  });
+
+  return {
+    data: {
+      centro: { id: centro.id, nombre: centro.nombre },
+      prestador: {
+        id: prestador.id,
+        nombre: prestador.nombre,
+        apellido: prestador.apellido,
+        documento: prestador.documento ?? null,
+        email: prestador.email ?? null,
+        telefono: prestador.telefono ?? null,
+      },
+      pacientes,
+      dias,
+      totalMinutos,
+    } as ResidenciaReporte,
+    error: null,
+  };
 }

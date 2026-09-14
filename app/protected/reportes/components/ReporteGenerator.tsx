@@ -17,6 +17,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -55,6 +56,9 @@ type ReporteData = {
     monto: number | null;
     descripcion: string | null;
     estado: "pendiente" | "completada";
+    minutos: number | null;
+    started_at: string | null;
+    completed_at: string | null;
     paciente: {
       nombre: string;
       apellido: string;
@@ -64,6 +68,7 @@ type ReporteData = {
   totales: {
     cantidad: number;
     monto: number;
+    minutos: number;
   };
 };
 
@@ -73,8 +78,6 @@ export default function ReporteGenerator({
   prestadores: Prestador[];
 }) {
   const [prestadorId, setPrestadorId] = useState("");
-  const [prestadorOpen, setPrestadorOpen] = useState(false);
-  const [prestadorFilter, setPrestadorFilter] = useState("");
   const [pacienteIds, setPacienteIds] = useState<string[]>([]);
   const [pacienteOpen, setPacienteOpen] = useState(false);
   const [pacienteFilter, setPacienteFilter] = useState("");
@@ -143,6 +146,18 @@ export default function ReporteGenerator({
     loadLogo();
   }, []);
 
+  const formatearHora = (iso: string | null | undefined) => {
+    if (!iso) return "-";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "-";
+    return d.toLocaleTimeString("es-AR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "America/Argentina/Buenos_Aires",
+    });
+  };
+
   const handleGenerarReporte = async () => {
     if (!prestadorId || !fechaInicio || !fechaFin) {
       alert("Por favor completa todos los campos");
@@ -179,6 +194,14 @@ export default function ReporteGenerator({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const formatearDuracion = (minutos: number | null | undefined) => {
+    if (minutos === null || minutos === undefined || minutos <= 0) return 'N/A';
+    const h = Math.floor(minutos / 60);
+    const m = Math.round(minutos % 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
   };
 
   const generarPDF = () => {
@@ -252,6 +275,9 @@ export default function ReporteGenerator({
       p.paciente ? `${p.paciente.apellido}, ${p.paciente.nombre}` : "N/A",
       p.paciente?.documento || "N/A",
       p.estado.toUpperCase(),
+      formatearHora(p.started_at),
+      formatearHora(p.completed_at),
+      formatearDuracion(p.minutos),
       `$${(p.monto || 0).toLocaleString("es-AR")}`,
     ]);
 
@@ -273,7 +299,7 @@ export default function ReporteGenerator({
     autoTable(doc, {
       startY: 85,
       margin: { left: marginLeft, right: 15 },
-      head: [["Fecha", "Tipo", "Paciente", "DNI Paciente", "Estado", "Monto"]],
+      head: [["Fecha", "Tipo", "Paciente", "DNI Paciente", "Estado", "Inicio", "Fin", "Duración", "Monto"]],
       body: tableData,
       theme: "grid",
       headStyles: {
@@ -286,12 +312,15 @@ export default function ReporteGenerator({
         cellPadding: 3,
       },
       columnStyles: {
-        0: { cellWidth: 25 },
-        1: { cellWidth: 35 },
-        2: { cellWidth: 40 },
-        3: { cellWidth: 25 },
-        4: { cellWidth: 28 },
-        5: { cellWidth: 25, halign: "right" },
+        0: { cellWidth: 20 },
+        1: { cellWidth: 28 },
+        2: { cellWidth: 32 },
+        3: { cellWidth: 20 },
+        4: { cellWidth: 20 },
+        5: { cellWidth: 16 },
+        6: { cellWidth: 16 },
+        7: { cellWidth: 18 },
+        8: { cellWidth: 18, halign: "right" },
       },
       didDrawPage: function (data: any) {
         const footerY = doc.internal.pageSize.height - 10;
@@ -328,9 +357,14 @@ export default function ReporteGenerator({
     doc.setFontSize(11);
     doc.text(`Total de Prestaciones: ${totales.cantidad}`, marginLeft, finalY);
     doc.text(
-      `Monto Total: $${totales.monto.toLocaleString("es-AR")}`,
+      `Total de Horas: ${formatearDuracion(totales.minutos)}`,
       marginLeft,
       finalY + 7
+    );
+    doc.text(
+      `Monto Total: $${totales.monto.toLocaleString("es-AR")}`,
+      marginLeft,
+      finalY + 14
     );
 
     // Guardar
@@ -354,7 +388,7 @@ export default function ReporteGenerator({
       ["Período:", `${fechaInicio} - ${fechaFin}`],
       [],
       ["PRESTACIONES COMPLETADAS"],
-      ["Fecha", "Tipo", "Paciente", "DNI Paciente", "Estado", "Monto"],
+      ["Fecha", "Tipo", "Paciente", "DNI Paciente", "Estado", "Hora inicio", "Hora fin", "Duración", "Monto"],
     ];
 
     const prestacionesData = prestaciones.map((p) => [
@@ -363,12 +397,16 @@ export default function ReporteGenerator({
       p.paciente ? `${p.paciente.apellido}, ${p.paciente.nombre}` : "N/A",
       p.paciente?.documento || "N/A",
       p.estado,
+      formatearHora(p.started_at),
+      formatearHora(p.completed_at),
+      p.minutos || 0,
       p.monto || 0,
     ]);
 
     const totalesData = [
       [],
       ["Total de Prestaciones:", totales.cantidad],
+      ["Total de Horas:", formatearDuracion(totales.minutos)],
       ["Monto Total:", totales.monto],
     ];
 
@@ -382,12 +420,15 @@ export default function ReporteGenerator({
     const ws = XLSX.utils.aoa_to_sheet(worksheetData);
 
     ws["!cols"] = [
-      { wch: 15 },
-      { wch: 30 },
-      { wch: 35 },
-      { wch: 15 },
-      { wch: 15 },
-      { wch: 15 },
+      { wch: 14 },
+      { wch: 28 },
+      { wch: 32 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 16 },
     ];
 
     XLSX.utils.book_append_sheet(wb, ws, "Reporte");
@@ -404,77 +445,18 @@ export default function ReporteGenerator({
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <label className="block text-sm font-medium mb-2">Prestador</label>
-            <DropdownMenu open={prestadorOpen} onOpenChange={setPrestadorOpen}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={prestadorOpen}
-                  className="w-full justify-between overflow-hidden text-left"
-                >
-                  <span className="truncate">
-                    {(() => {
-                      const p = prestadores.find((x) => x.id === prestadorId);
-                      return p
-                        ? `${p.apellido}, ${p.nombre}${
-                            p.documento ? ` (${p.documento})` : ""
-                          }`
-                        : "Seleccionar prestador...";
-                    })()}
-                  </span>
-                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width] p-2">
-                <Input
-                  placeholder="Buscar por nombre o DNI..."
-                  value={prestadorFilter}
-                  onChange={(e) => setPrestadorFilter(e.target.value)}
-                  className="mb-2"
-                />
-                {prestadores
-                  .filter((p) => {
-                    const q = prestadorFilter.toLowerCase();
-                    return (
-                      `${p.apellido} ${p.nombre}`.toLowerCase().includes(q) ||
-                      (p.documento || "").toLowerCase().includes(q)
-                    );
-                  })
-                  .map((p) => {
-                    const label = `${p.apellido}, ${p.nombre}${
-                      p.documento ? ` (${p.documento})` : ""
-                    }`;
-                    return (
-                      <DropdownMenuItem
-                        key={p.id}
-                        onClick={() => {
-                          setPrestadorId(p.id);
-                          setPrestadorOpen(false);
-                        }}
-                        className="flex items-center gap-2"
-                      >
-                        <Check
-                          className={`h-4 w-4 ${
-                            prestadorId === p.id ? "opacity-100" : "opacity-0"
-                          }`}
-                        />
-                        {label}
-                      </DropdownMenuItem>
-                    );
-                  })}
-                {prestadores.filter((p) => {
-                  const q = prestadorFilter.toLowerCase();
-                  return (
-                    `${p.apellido} ${p.nombre}`.toLowerCase().includes(q) ||
-                    (p.documento || "").toLowerCase().includes(q)
-                  );
-                }).length === 0 && (
-                  <div className="px-2 py-6 text-sm text-muted-foreground">
-                    No se encontraron resultados.
-                  </div>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Combobox
+              options={prestadores.map((p) => ({
+                value: p.id,
+                label: `${p.apellido}, ${p.nombre}${p.documento ? ` (${p.documento})` : ""}`,
+                searchText: `${p.apellido} ${p.nombre} ${p.documento || ""}`,
+              }))}
+              value={prestadorId}
+              onValueChange={setPrestadorId}
+              placeholder="Seleccionar prestador..."
+              searchPlaceholder="Buscar por nombre o DNI..."
+              emptyText="No se encontraron prestadores."
+            />
           </div>
 
           <div>
@@ -777,13 +759,19 @@ export default function ReporteGenerator({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div className="bg-card p-4 rounded-lg border shadow-sm dark:shadow-none">
               <p className="text-sm text-muted-foreground">
                 Total de Prestaciones
               </p>
               <p className="text-2xl font-bold">
                 {reporteData.totales.cantidad}
+              </p>
+            </div>
+            <div className="bg-card p-4 rounded-lg border shadow-sm dark:shadow-none">
+              <p className="text-sm text-muted-foreground">Total de Horas</p>
+              <p className="text-2xl font-bold">
+                {formatearDuracion(reporteData.totales.minutos)}
               </p>
             </div>
             <div className="bg-card p-4 rounded-lg border shadow-sm dark:shadow-none">
@@ -811,6 +799,15 @@ export default function ReporteGenerator({
                     Estado
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
+                    Hora inicio
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
+                    Hora fin
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
+                    Duración
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
                     Monto
                   </th>
                 </tr>
@@ -830,6 +827,15 @@ export default function ReporteGenerator({
                         : "N/A"}
                     </td>
                     <td className="px-4 py-3 text-sm">{p.estado}</td>
+                    <td className="px-4 py-3 text-sm">
+                      {formatearHora(p.started_at)}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {formatearHora(p.completed_at)}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {formatearDuracion(p.minutos)}
+                    </td>
                     <td className="px-4 py-3 text-sm">
                       ${(p.monto || 0).toLocaleString("es-AR")}
                     </td>

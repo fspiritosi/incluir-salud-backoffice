@@ -2,8 +2,9 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import ReporteGenerator from "./components/ReporteGenerator";
 import ReporteBeneficiarioGenerator from "./components/ReporteBeneficiarioGenerator";
+import ReporteResidenciaGenerator from "./components/ReporteResidenciaGenerator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getPrestadores, getBeneficiarios } from "./actions";
+import { getPrestadores, getBeneficiarios, getCentros } from "./actions";
 
 export default async function ReportesPage() {
   const supabase = await createClient();
@@ -13,9 +14,10 @@ export default async function ReportesPage() {
     redirect("/auth/login");
   }
 
-  const [prestadores, beneficiarios] = await Promise.all([
+  const [prestadores, beneficiarios, centros] = await Promise.all([
     getPrestadores(),
     getBeneficiarios(),
+    getCentros(),
   ]);
 
   return (
@@ -31,12 +33,16 @@ export default async function ReportesPage() {
         <TabsList>
           <TabsTrigger value="prestador">Por prestador</TabsTrigger>
           <TabsTrigger value="beneficiario">Por beneficiario</TabsTrigger>
+          <TabsTrigger value="residencia">Por residencia</TabsTrigger>
         </TabsList>
         <TabsContent value="prestador">
           <ReporteGenerator prestadores={prestadores} />
         </TabsContent>
         <TabsContent value="beneficiario">
           <ReporteBeneficiarioGenerator beneficiarios={beneficiarios} />
+        </TabsContent>
+        <TabsContent value="residencia">
+          <ReporteResidenciaGenerator centros={centros} prestadores={prestadores} />
         </TabsContent>
       </Tabs>
     </div>
