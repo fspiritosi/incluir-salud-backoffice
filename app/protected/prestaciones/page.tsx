@@ -53,6 +53,7 @@ export default async function PrestacionesPage({ searchParams }: PrestacionesPag
     pacienteIds: toArray(resolvedSearchParams?.pacienteIds),
     prestadorIds: toArray(resolvedSearchParams?.prestadorIds),
     estados: toArray(resolvedSearchParams?.estados),
+    soloAlertas: toSingle(resolvedSearchParams?.soloAlertas) === "1",
   };
 
   const [{ data, error, pagination }, { data: poolData, error: poolError }, { data: allPrestadores }, { data: allPacientes }] = await Promise.all([
@@ -62,6 +63,7 @@ export default async function PrestacionesPage({ searchParams }: PrestacionesPag
       pacienteIds: filters.pacienteIds,
       prestadorIds: filters.prestadorIds,
       estados: filters.estados,
+      soloAlertas: filters.soloAlertas,
       page,
       pageSize,
     }),

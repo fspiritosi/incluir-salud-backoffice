@@ -18,6 +18,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -66,6 +67,8 @@ type ReporteBeneficiarioData = {
     descripcion: string | null;
     estado: "pendiente" | "completada";
     minutos: number | null;
+    started_at: string | null;
+    completed_at: string | null;
     prestador: {
       nombre: string;
       apellido: string;
@@ -87,8 +90,6 @@ export default function ReporteBeneficiarioGenerator({
   beneficiarios: Beneficiario[];
 }) {
   const [beneficiarioId, setBeneficiarioId] = useState("");
-  const [beneficiarioOpen, setBeneficiarioOpen] = useState(false);
-  const [beneficiarioFilter, setBeneficiarioFilter] = useState("");
   const [prestadorIds, setPrestadorIds] = useState<string[]>([]);
   const [prestadorOpen, setPrestadorOpen] = useState(false);
   const [prestadorFilter, setPrestadorFilter] = useState("");
@@ -154,6 +155,18 @@ export default function ReporteBeneficiarioGenerator({
 
     loadLogo();
   }, []);
+
+  const formatearHora = (iso: string | null | undefined) => {
+    if (!iso) return "-";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "-";
+    return d.toLocaleTimeString("es-AR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "America/Argentina/Buenos_Aires",
+    });
+  };
 
   const handleGenerarReporte = async () => {
     if (!beneficiarioId || !fechaInicio || !fechaFin) {
@@ -260,6 +273,8 @@ export default function ReporteBeneficiarioGenerator({
       p.prestador ? `${p.prestador.apellido}, ${p.prestador.nombre}` : "N/A",
       p.prestador?.documento || "N/A",
       p.estado.toUpperCase(),
+      formatearHora(p.started_at),
+      formatearHora(p.completed_at),
       formatearDuracion(p.minutos),
       `$${(p.monto || 0).toLocaleString("es-AR")}`,
     ]);
@@ -274,7 +289,7 @@ export default function ReporteBeneficiarioGenerator({
     autoTable(doc, {
       startY: 85,
       margin: { left: marginLeft, right: 15 },
-      head: [["Fecha", "Tipo", "Prestador", "DNI Prestador", "Estado", "Duración", "Monto"]],
+      head: [["Fecha", "Tipo", "Prestador", "DNI Prestador", "Estado", "Inicio", "Fin", "Duración", "Monto"]],
       body: tableData,
       theme: "grid",
       headStyles: {
@@ -287,13 +302,15 @@ export default function ReporteBeneficiarioGenerator({
         cellPadding: 3,
       },
       columnStyles: {
-        0: { cellWidth: 22 },
-        1: { cellWidth: 32 },
-        2: { cellWidth: 36 },
-        3: { cellWidth: 22 },
-        4: { cellWidth: 24 },
-        5: { cellWidth: 22 },
-        6: { cellWidth: 22, halign: "right" },
+        0: { cellWidth: 20 },
+        1: { cellWidth: 28 },
+        2: { cellWidth: 32 },
+        3: { cellWidth: 20 },
+        4: { cellWidth: 20 },
+        5: { cellWidth: 16 },
+        6: { cellWidth: 16 },
+        7: { cellWidth: 18 },
+        8: { cellWidth: 18, halign: "right" },
       },
       didDrawPage: function (data: any) {
         const footerY = doc.internal.pageSize.height - 10;
@@ -356,7 +373,7 @@ export default function ReporteBeneficiarioGenerator({
       ["Período:", `${fechaInicio} - ${fechaFin}`],
       [],
       ["PRESTACIONES"],
-      ["Fecha", "Tipo", "Prestador", "DNI Prestador", "Estado", "Duración", "Monto"],
+      ["Fecha", "Tipo", "Prestador", "DNI Prestador", "Estado", "Hora inicio", "Hora fin", "Duración", "Monto"],
     ];
 
     const prestacionesData = prestaciones.map((p) => [
@@ -365,6 +382,8 @@ export default function ReporteBeneficiarioGenerator({
       p.prestador ? `${p.prestador.apellido}, ${p.prestador.nombre}` : "N/A",
       p.prestador?.documento || "N/A",
       p.estado,
+      formatearHora(p.started_at),
+      formatearHora(p.completed_at),
       p.minutos || 0,
       p.monto || 0,
     ]);
@@ -386,13 +405,15 @@ export default function ReporteBeneficiarioGenerator({
     const ws = XLSX.utils.aoa_to_sheet(worksheetData);
 
     ws["!cols"] = [
-      { wch: 15 },
-      { wch: 30 },
-      { wch: 35 },
-      { wch: 15 },
-      { wch: 15 },
-      { wch: 12 },
-      { wch: 15 },
+      { wch: 14 },
+      { wch: 28 },
+      { wch: 32 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 16 },
     ];
 
     XLSX.utils.book_append_sheet(wb, ws, "Reporte");
@@ -411,77 +432,18 @@ export default function ReporteBeneficiarioGenerator({
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <label className="block text-sm font-medium mb-2">Beneficiario</label>
-            <DropdownMenu open={beneficiarioOpen} onOpenChange={setBeneficiarioOpen}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={beneficiarioOpen}
-                  className="w-full justify-between overflow-hidden text-left"
-                >
-                  <span className="truncate">
-                    {(() => {
-                      const b = beneficiarios.find((x) => x.id === beneficiarioId);
-                      return b
-                        ? `${b.apellido}, ${b.nombre}${
-                            b.documento ? ` (${b.documento})` : ""
-                          }`
-                        : "Seleccionar beneficiario...";
-                    })()}
-                  </span>
-                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width] p-2">
-                <Input
-                  placeholder="Buscar por nombre o DNI..."
-                  value={beneficiarioFilter}
-                  onChange={(e) => setBeneficiarioFilter(e.target.value)}
-                  className="mb-2"
-                />
-                {beneficiarios
-                  .filter((b) => {
-                    const q = beneficiarioFilter.toLowerCase();
-                    return (
-                      `${b.apellido} ${b.nombre}`.toLowerCase().includes(q) ||
-                      (b.documento || "").toLowerCase().includes(q)
-                    );
-                  })
-                  .map((b) => {
-                    const label = `${b.apellido}, ${b.nombre}${
-                      b.documento ? ` (${b.documento})` : ""
-                    }`;
-                    return (
-                      <DropdownMenuItem
-                        key={b.id}
-                        onClick={() => {
-                          setBeneficiarioId(b.id);
-                          setBeneficiarioOpen(false);
-                        }}
-                        className="flex items-center gap-2"
-                      >
-                        <Check
-                          className={`h-4 w-4 ${
-                            beneficiarioId === b.id ? "opacity-100" : "opacity-0"
-                          }`}
-                        />
-                        {label}
-                      </DropdownMenuItem>
-                    );
-                  })}
-                {beneficiarios.filter((b) => {
-                  const q = beneficiarioFilter.toLowerCase();
-                  return (
-                    `${b.apellido} ${b.nombre}`.toLowerCase().includes(q) ||
-                    (b.documento || "").toLowerCase().includes(q)
-                  );
-                }).length === 0 && (
-                  <div className="px-2 py-6 text-sm text-muted-foreground">
-                    No se encontraron resultados.
-                  </div>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Combobox
+              options={beneficiarios.map((b) => ({
+                value: b.id,
+                label: `${b.apellido}, ${b.nombre}${b.documento ? ` (${b.documento})` : ""}`,
+                searchText: `${b.apellido} ${b.nombre} ${b.documento || ""}`,
+              }))}
+              value={beneficiarioId}
+              onValueChange={setBeneficiarioId}
+              placeholder="Seleccionar beneficiario..."
+              searchPlaceholder="Buscar por nombre o DNI..."
+              emptyText="No se encontraron beneficiarios."
+            />
           </div>
 
           <div>
@@ -808,6 +770,12 @@ export default function ReporteBeneficiarioGenerator({
                     Estado
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
+                    Hora inicio
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
+                    Hora fin
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
                     Duración
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">
@@ -830,6 +798,12 @@ export default function ReporteBeneficiarioGenerator({
                         : "N/A"}
                     </td>
                     <td className="px-4 py-3 text-sm">{p.estado}</td>
+                    <td className="px-4 py-3 text-sm">
+                      {formatearHora(p.started_at)}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {formatearHora(p.completed_at)}
+                    </td>
                     <td className="px-4 py-3 text-sm">
                       {formatearDuracion(p.minutos)}
                     </td>

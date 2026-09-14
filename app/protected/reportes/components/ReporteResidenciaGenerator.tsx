@@ -5,21 +5,13 @@ import {
   FileDown,
   FileSpreadsheet,
   Loader2,
-  ChevronsUpDown,
-  Check,
 } from "lucide-react";
 import { getCentros, getPrestadores, getReporteResidencia } from "../actions";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
-import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 export type CentroResumen = {
   id: string;
@@ -45,6 +37,8 @@ type ResidenciaReporteData = {
   dias: Array<{
     fecha: string;
     minutos: number;
+    entrada_at: string | null;
+    salida_at: string | null;
   }>;
   totalMinutos: number;
 };
@@ -60,10 +54,6 @@ export default function ReporteResidenciaGenerator({
   const [prestadorId, setPrestadorId] = useState("");
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
-  const [centroOpen, setCentroOpen] = useState(false);
-  const [centroFilter, setCentroFilter] = useState("");
-  const [prestadorOpen, setPrestadorOpen] = useState(false);
-  const [prestadorFilter, setPrestadorFilter] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [reporteData, setReporteData] = useState<ResidenciaReporteData | null>(null);
 
@@ -97,7 +87,20 @@ export default function ReporteResidenciaGenerator({
   };
 
   const formatearFecha = (fecha: string) => {
-    return new Date(fecha).toLocaleDateString("es-AR");
+    const [y, m, d] = fecha.split("-");
+    return `${d}/${m}/${y}`;
+  };
+
+  const formatearHora = (iso: string | null | undefined) => {
+    if (!iso) return "-";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "-";
+    return d.toLocaleTimeString("es-AR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "America/Argentina/Buenos_Aires",
+    });
   };
 
   const formatearDuracion = (minutos: number | null | undefined) => {
@@ -164,18 +167,25 @@ export default function ReporteResidenciaGenerator({
 
     const diasRows = dias.map((d) => [
       formatearFecha(d.fecha),
+      d.entrada_at ? formatearHora(d.entrada_at) : "-",
+      d.salida_at ? formatearHora(d.salida_at) : "-",
       formatearDuracion(d.minutos),
     ]);
 
     autoTable(doc, {
       startY: doc.lastAutoTable.finalY + 10,
       margin: { left: marginLeft, right: 15 },
-      head: [["Fecha", "Duración"]],
+      head: [["Fecha", "Entrada", "Salida", "Duración"]],
       body: diasRows.length > 0 ? diasRows : [["Sin jornadas", ""]],
       theme: "grid",
       headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: "bold" },
       styles: { fontSize: 9, cellPadding: 3 },
-      columnStyles: { 1: { halign: "right" } },
+      columnStyles: {
+        0: { cellWidth: 22 },
+        1: { cellWidth: 22 },
+        2: { cellWidth: 22 },
+        3: { cellWidth: 22, halign: "right" },
+      },
     });
 
     const finalY = doc.lastAutoTable.finalY + 10;
@@ -214,8 +224,13 @@ export default function ReporteResidenciaGenerator({
       p.documento || "N/A",
     ]);
 
-    const diasHeader = [[], ["HORAS POR DÍA"], ["Fecha", "Duración (min)"]];
-    const diasRows = dias.map((d) => [formatearFecha(d.fecha), d.minutos]);
+    const diasHeader = [[], ["HORAS POR DÍA"], ["Fecha", "Entrada", "Salida", "Duración (min)"]];
+    const diasRows = dias.map((d) => [
+      formatearFecha(d.fecha),
+      d.entrada_at ? formatearHora(d.entrada_at) : "-",
+      d.salida_at ? formatearHora(d.salida_at) : "-",
+      d.minutos,
+    ]);
 
     const totales = [
       [],
@@ -234,8 +249,10 @@ export default function ReporteResidenciaGenerator({
     const ws = XLSX.utils.aoa_to_sheet(worksheetData);
 
     ws["!cols"] = [
-      { wch: 40 },
-      { wch: 20 },
+      { wch: 15 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 18 },
     ];
 
     XLSX.utils.book_append_sheet(wb, ws, "Residencia");
@@ -254,139 +271,34 @@ export default function ReporteResidenciaGenerator({
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <label className="block text-sm font-medium mb-2">Residencia/Centro</label>
-            <DropdownMenu open={centroOpen} onOpenChange={setCentroOpen}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={centroOpen}
-                  className="w-full justify-between overflow-hidden text-left"
-                >
-                  <span className="truncate">
-                    {centros.find((c) => c.id === centroId)?.nombre ||
-                      "Seleccionar centro..."}
-                  </span>
-                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width] p-2">
-                <Input
-                  placeholder="Buscar centro..."
-                  value={centroFilter}
-                  onChange={(e) => setCentroFilter(e.target.value)}
-                  className="mb-2"
-                />
-                <div className="max-h-60 overflow-y-auto">
-                  {centros
-                    .filter((c) =>
-                      c.nombre.toLowerCase().includes(centroFilter.toLowerCase())
-                    )
-                    .map((c) => (
-                      <DropdownMenuItem
-                        key={c.id}
-                        onClick={() => {
-                          setCentroId(c.id);
-                          setCentroOpen(false);
-                          setCentroFilter("");
-                        }}
-                        className="flex items-center gap-2"
-                      >
-                        <Check
-                          className={`h-4 w-4 ${
-                            centroId === c.id ? "opacity-100" : "opacity-0"
-                          }`}
-                        />
-                        {c.nombre}
-                      </DropdownMenuItem>
-                    ))}
-                  {centros.filter((c) =>
-                    c.nombre.toLowerCase().includes(centroFilter.toLowerCase())
-                  ).length === 0 && (
-                    <div className="px-2 py-6 text-sm text-muted-foreground">
-                      No se encontraron resultados.
-                    </div>
-                  )}
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Combobox
+              options={centros.map((c) => ({
+                value: c.id,
+                label: c.nombre,
+                searchText: c.nombre,
+              }))}
+              value={centroId}
+              onValueChange={setCentroId}
+              placeholder="Seleccionar centro..."
+              searchPlaceholder="Buscar centro..."
+              emptyText="No se encontraron centros."
+            />
           </div>
 
           <div>
             <label className="block text-sm font-medium mb-2">AT / Prestador</label>
-            <DropdownMenu open={prestadorOpen} onOpenChange={setPrestadorOpen}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={prestadorOpen}
-                  className="w-full justify-between overflow-hidden text-left"
-                >
-                  <span className="truncate">
-                    {(() => {
-                      const p = prestadores.find((x) => x.id === prestadorId);
-                      return p
-                        ? `${p.apellido}, ${p.nombre}${
-                            p.documento ? ` (${p.documento})` : ""
-                          }`
-                        : "Seleccionar AT...";
-                    })()}
-                  </span>
-                  <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width] p-2">
-                <Input
-                  placeholder="Buscar por nombre o DNI..."
-                  value={prestadorFilter}
-                  onChange={(e) => setPrestadorFilter(e.target.value)}
-                  className="mb-2"
-                />
-                <div className="max-h-60 overflow-y-auto">
-                  {prestadores
-                    .filter((p) => {
-                      const q = prestadorFilter.toLowerCase();
-                      return (
-                        `${p.apellido} ${p.nombre}`.toLowerCase().includes(q) ||
-                        (p.documento || "").toLowerCase().includes(q)
-                      );
-                    })
-                    .map((p) => {
-                      const label = `${p.apellido}, ${p.nombre}${
-                        p.documento ? ` (${p.documento})` : ""
-                      }`;
-                      return (
-                        <DropdownMenuItem
-                          key={p.id}
-                          onClick={() => {
-                            setPrestadorId(p.id);
-                            setPrestadorOpen(false);
-                            setPrestadorFilter("");
-                          }}
-                          className="flex items-center gap-2"
-                        >
-                          <Check
-                            className={`h-4 w-4 ${
-                              prestadorId === p.id ? "opacity-100" : "opacity-0"
-                            }`}
-                          />
-                          {label}
-                        </DropdownMenuItem>
-                      );
-                    })}
-                  {prestadores.filter((p) => {
-                    const q = prestadorFilter.toLowerCase();
-                    return (
-                      `${p.apellido} ${p.nombre}`.toLowerCase().includes(q) ||
-                      (p.documento || "").toLowerCase().includes(q)
-                    );
-                  }).length === 0 && (
-                    <div className="px-2 py-6 text-sm text-muted-foreground">
-                      No se encontraron resultados.
-                    </div>
-                  )}
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Combobox
+              options={prestadores.map((p) => ({
+                value: p.id,
+                label: `${p.apellido}, ${p.nombre}${p.documento ? ` (${p.documento})` : ""}`,
+                searchText: `${p.apellido} ${p.nombre} ${p.documento || ""}`,
+              }))}
+              value={prestadorId}
+              onValueChange={setPrestadorId}
+              placeholder="Seleccionar AT..."
+              searchPlaceholder="Buscar por nombre o DNI..."
+              emptyText="No se encontraron ATs."
+            />
           </div>
 
           <div>
@@ -516,6 +428,12 @@ export default function ReporteResidenciaGenerator({
                       <th className="px-4 py-2 text-left text-xs font-medium uppercase">
                         Fecha
                       </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium uppercase">
+                        Entrada
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium uppercase">
+                        Salida
+                      </th>
                       <th className="px-4 py-2 text-right text-xs font-medium uppercase">
                         Duración
                       </th>
@@ -527,6 +445,12 @@ export default function ReporteResidenciaGenerator({
                         <td className="px-4 py-2 text-sm">
                           {formatearFecha(d.fecha)}
                         </td>
+                        <td className="px-4 py-2 text-sm">
+                          {d.entrada_at ? formatearHora(d.entrada_at) : "-"}
+                        </td>
+                        <td className="px-4 py-2 text-sm">
+                          {d.salida_at ? formatearHora(d.salida_at) : "-"}
+                        </td>
                         <td className="px-4 py-2 text-sm text-right font-semibold">
                           {formatearDuracion(d.minutos)}
                         </td>
@@ -534,7 +458,7 @@ export default function ReporteResidenciaGenerator({
                     ))}
                     {reporteData.dias.length === 0 && (
                       <tr>
-                        <td className="px-4 py-2 text-sm text-muted-foreground" colSpan={2}>
+                        <td className="px-4 py-2 text-sm text-muted-foreground" colSpan={4}>
                           No hay jornadas registradas en el período
                         </td>
                       </tr>

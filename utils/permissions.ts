@@ -9,6 +9,15 @@ export const canCreateOrEditPaciente = (roles: RoleName[]) =>
 export const canCreateOrEditPrestacion = (roles: RoleName[]) =>
   hasRole(roles, ["auditor", "super_admin"]);
 
+export const isSuperAdmin = (roles: RoleName[]) =>
+  hasRole(roles, ["super_admin"]);
+
+export const canEditCompletedPrestacion = (roles: RoleName[]) =>
+  isSuperAdmin(roles);
+
+export const canManageJornadaResidencia = (roles: RoleName[]) =>
+  isSuperAdmin(roles);
+
 export const canTogglePrestador = (roles: RoleName[]) =>
   hasRole(roles, ["auditor", "super_admin"]);
 

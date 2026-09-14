@@ -21,7 +21,7 @@ import { Pencil, MoreHorizontalIcon, XCircle, ChevronDown, Loader2, Repeat, User
 import { DataTable } from "@/components/ui/data-table";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { useBackofficeRoles } from "@/hooks/useBackofficeRoles";
-import { canCreateOrEditPrestacion } from "@/utils/permissions";
+import { canCreateOrEditPrestacion, isSuperAdmin } from "@/utils/permissions";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -44,6 +44,8 @@ import {
   reasignarPrestacionesDePaciente,
   reasignarPrestacionesSeleccionadas,
   updatePrestacionesHorarioResidencia,
+  upsertJornadaResidenciaHorario,
+  getJornadaResidenciaHorario,
   type PacientePendienteResumen,
 } from "@/app/protected/prestaciones/actions";
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +67,7 @@ type PrestacionesFilters = {
   pacienteIds: string[];
   prestadorIds: string[];
   estados: string[];
+  soloAlertas?: boolean;
 };
 
 type CheckedState = boolean | 'indeterminate';
@@ -204,9 +207,10 @@ function esCerradaAnticipadamente(prestacion: PrestacionRow) {
   return false;
 }
 
-function RowActionsCell({ prestacion, canWrite, loading }: {
+function RowActionsCell({ prestacion, canWrite, isSuper, loading }: {
   prestacion: PrestacionRow;
   canWrite: boolean;
+  isSuper: boolean;
   loading: boolean;
 }) {
   const router = useRouter();
@@ -214,8 +218,54 @@ function RowActionsCell({ prestacion, canWrite, loading }: {
   const [isPending, startTransition] = useTransition();
   const [openDialog, setOpenDialog] = useState<'completar' | 'cancelar' | 'eliminar' | null>(null);
   const [openLocation, setOpenLocation] = useState(false);
+  const [editingHorario, setEditingHorario] = useState(false);
+  const [editStartedAt, setEditStartedAt] = useState('');
+  const [editCompletedAt, setEditCompletedAt] = useState('');
+  const [editHorarioError, setEditHorarioError] = useState<string | null>(null);
   const coords = useMemo(() => parseUbicacion(prestacion.ubicacion_cierre), [prestacion.ubicacion_cierre]);
   const estado = (prestacion.estado || '').toLowerCase();
+
+  const toDateTimeLocal = (value: string | null | undefined) => {
+    if (!value) return '';
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return '';
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+  };
+
+  const startEditingHorario = () => {
+    setEditStartedAt(toDateTimeLocal(prestacion.started_at));
+    setEditCompletedAt(toDateTimeLocal(prestacion.completed_at));
+    setEditHorarioError(null);
+    setEditingHorario(true);
+  };
+
+  const saveHorario = () => {
+    setEditHorarioError(null);
+    startTransition(async () => {
+      try {
+        const res = await fetch(`/api/prestaciones/${prestacion.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            started_at: editStartedAt ? new Date(editStartedAt).toISOString() : null,
+            completed_at: editCompletedAt ? new Date(editCompletedAt).toISOString() : null,
+          }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setEditHorarioError(json?.error || 'No se pudo actualizar el horario.');
+          return;
+        }
+        toast({ title: 'Horario actualizado' });
+        setEditingHorario(false);
+        setOpenLocation(false);
+        router.refresh();
+      } catch {
+        setEditHorarioError('No se pudo actualizar el horario.');
+      }
+    });
+  };
 
   if (!canWrite || loading) {
     return (
@@ -265,9 +315,29 @@ function RowActionsCell({ prestacion, canWrite, loading }: {
   return (
     <>
       {esCompletada ? (
-        <Button size="icon" variant="outline" onClick={() => setOpenLocation(true)} title={coords ? "Ver ubicación de cierre" : "Sin ubicación registrada"}>
-          <MapPin className={`h-4 w-4 ${pinColorClass}`} />
-        </Button>
+        isSuper ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon" variant="outline">
+                <MoreHorizontalIcon className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Super admin</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => setOpenLocation(true)}>
+                <MapPin className="mr-2 h-4 w-4" /> Ver detalle / editar horario
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-red-600 focus:text-red-600 font-medium" onSelect={() => setOpenDialog('eliminar')}>
+                <Trash2 className="mr-2 h-4 w-4" /> Eliminar permanentemente
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <Button size="icon" variant="outline" onClick={() => setOpenLocation(true)} title={coords ? "Ver ubicación de cierre" : "Sin ubicación registrada"}>
+            <MapPin className={`h-4 w-4 ${pinColorClass}`} />
+          </Button>
+        )
       ) : (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -416,14 +486,41 @@ function RowActionsCell({ prestacion, canWrite, loading }: {
                 <span className="whitespace-pre-wrap text-right">{prestacion.notas}</span>
               </div>
             )}
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Inicio:</span>
-              <span>{formatDateTime(prestacion.started_at)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Cierre:</span>
-              <span>{formatDateTime(prestacion.completed_at)}</span>
-            </div>
+            {editingHorario ? (
+              <div className="space-y-2 rounded-md border p-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Inicio</Label>
+                  <Input type="datetime-local" value={editStartedAt} onChange={(e) => setEditStartedAt(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Cierre</Label>
+                  <Input type="datetime-local" value={editCompletedAt} onChange={(e) => setEditCompletedAt(e.target.value)} />
+                </div>
+                {editHorarioError && <p className="text-xs text-red-600">{editHorarioError}</p>}
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button size="sm" variant="outline" onClick={() => setEditingHorario(false)} disabled={isPending}>Cancelar</Button>
+                  <Button size="sm" onClick={saveHorario} disabled={isPending}>{isPending ? 'Guardando...' : 'Guardar horario'}</Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Inicio:</span>
+                  <span>{formatDateTime(prestacion.started_at)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Cierre:</span>
+                  <span>{formatDateTime(prestacion.completed_at)}</span>
+                </div>
+                {isSuper && esCompletada && (
+                  <div className="flex justify-end">
+                    <Button size="sm" variant="outline" onClick={startEditingHorario}>
+                      <Pencil className="mr-2 h-3 w-3" /> Editar horario
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
             {prestacion.started_at && prestacion.completed_at && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Duración:</span>
@@ -463,6 +560,7 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
   const pathname = usePathname();
   const { roles, loading } = useBackofficeRoles();
   const canWritePrestaciones = canCreateOrEditPrestacion(roles);
+  const isSuper = isSuperAdmin(roles);
   const { toast } = useToast();
   const [isPending, startTransition] = useTransition();
   const [isPaginationPending, startPaginationTransition] = useTransition();
@@ -502,6 +600,14 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
   const [residenceScheduleSaving, setResidenceScheduleSaving] = useState(false);
   const [residenceScheduleError, setResidenceScheduleError] = useState<string | null>(null);
 
+  // Edición de jornada de residencia completa (solo super_admin)
+  const [jornadaOpen, setJornadaOpen] = useState(false);
+  const [jornadaEntrada, setJornadaEntrada] = useState("");
+  const [jornadaSalida, setJornadaSalida] = useState("");
+  const [jornadaLoading, setJornadaLoading] = useState(false);
+  const [jornadaSaving, setJornadaSaving] = useState(false);
+  const [jornadaError, setJornadaError] = useState<string | null>(null);
+
   // Reasignación por selección
   const [reassignOpen, setReassignOpen] = useState(false);
   const [reassignPrestadores, setReassignPrestadores] = useState<PrestadorOption[]>([]);
@@ -531,8 +637,8 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
   const [estadoFilterSearch, setEstadoFilterSearch] = useState('');
   const [estadoSelected, setEstadoSelected] = useState<string[]>(normalizeStringArray(filters?.estados));
   const [diaFilterSearch, setDiaFilterSearch] = useState('');
-  const [soloAlertas, setSoloAlertas] = useState(false);
-  const isServerPaginated = Boolean(pagination) && !soloAlertas;
+  const soloAlertas = filters?.soloAlertas ?? false;
+  const isServerPaginated = Boolean(pagination);
 
   const enhancedData = useMemo(() => {
     const weekdayFormatter = new Intl.DateTimeFormat("es-AR", { weekday: "long" });
@@ -827,6 +933,7 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
         <RowActionsCell
           prestacion={row.original}
           canWrite={canWritePrestaciones}
+          isSuper={isSuper}
           loading={loading}
         />
       ),
@@ -873,10 +980,14 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
     table.setPageSize(pagination?.pageSize || 25);
   }, [isServerPaginated, pagination?.page, pagination?.pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const updateQueryParams = (next: { page?: number; pageSize?: number }) => {
+  const updateQueryParams = (next: { page?: number; pageSize?: number; soloAlertas?: boolean }) => {
     const current = new URLSearchParams(searchParams?.toString() ?? "");
     if (next.page !== undefined) current.set("page", String(next.page));
     if (next.pageSize !== undefined) current.set("pageSize", String(next.pageSize));
+    if (next.soloAlertas !== undefined) {
+      if (next.soloAlertas) current.set("soloAlertas", "1");
+      else current.delete("soloAlertas");
+    }
     try {
       const saved = localStorage.getItem("prestaciones_filters");
       const parsed = saved ? JSON.parse(saved) : {};
@@ -884,6 +995,7 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
         ...parsed,
         page: next.page ?? parsed.page ?? 1,
         pageSize: next.pageSize ?? parsed.pageSize ?? 25,
+        soloAlertas: next.soloAlertas ?? parsed.soloAlertas ?? false,
       }));
     } catch {}
     const query = current.toString();
@@ -1008,6 +1120,17 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
     allSameTipo &&
     allSameCentro &&
     allSameExactMoment &&
+    Boolean(referenceRow?.user_id);
+
+  const referenceCalendarDate = toDateInputValue(referenceRow?.fecha);
+  const allSameCalendarDate = selectedRows.every(r => toDateInputValue(r.fecha) === referenceCalendarDate);
+
+  const canEditJornadaCompleta =
+    isSuper &&
+    selectedRows.length > 0 &&
+    allSamePrestador &&
+    allSameCentro &&
+    allSameCalendarDate &&
     Boolean(referenceRow?.user_id);
 
   const residenceName = sharedCentroId
@@ -1205,6 +1328,95 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
     });
   };
 
+  const toDateTimeLocalValue = (value?: string | null) => {
+    if (!value) return '';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+  };
+
+  const handleOpenJornada = () => {
+    if (!referenceRow?.user_id || !sharedCentroId || !canEditJornadaCompleta) return;
+    setJornadaError(null);
+    setJornadaEntrada('');
+    setJornadaSalida('');
+    setJornadaLoading(true);
+    setJornadaOpen(true);
+    startTransition(async () => {
+      try {
+        const { data, error } = await getJornadaResidenciaHorario(referenceRow.user_id!, sharedCentroId!, referenceCalendarDate);
+        if (error) {
+          setJornadaError((error as any).message ?? 'No se pudo cargar la jornada.');
+        } else {
+          let entrada = data?.entrada_at ?? null;
+          let salida = data?.salida_at ?? null;
+
+          // Si la jornada todavía no tiene horario, lo sugerimos a partir de las
+          // prestaciones que el AT ya completó individualmente (la primera que
+          // inició y la última que cerró). Sigue siendo editable en el modal.
+          if (!entrada) {
+            const starts = selectedRows
+              .map((r) => (r.started_at ? new Date(r.started_at).getTime() : null))
+              .filter((t): t is number => t != null && !Number.isNaN(t));
+            if (starts.length) entrada = new Date(Math.min(...starts)).toISOString();
+          }
+          if (!salida) {
+            const ends = selectedRows
+              .map((r) => (r.completed_at ? new Date(r.completed_at).getTime() : null))
+              .filter((t): t is number => t != null && !Number.isNaN(t));
+            if (ends.length) salida = new Date(Math.max(...ends)).toISOString();
+          }
+
+          setJornadaEntrada(toDateTimeLocalValue(entrada));
+          setJornadaSalida(toDateTimeLocalValue(salida));
+        }
+      } catch {
+        setJornadaError('No se pudo cargar la jornada.');
+      } finally {
+        setJornadaLoading(false);
+      }
+    });
+  };
+
+  const handleSaveJornada = () => {
+    if (!referenceRow?.user_id || !sharedCentroId) {
+      setJornadaError('Seleccioná prestaciones con la misma residencia, AT y día.');
+      return;
+    }
+    setJornadaSaving(true);
+    setJornadaError(null);
+    startTransition(async () => {
+      try {
+        const { data, error } = await upsertJornadaResidenciaHorario({
+          userId: referenceRow.user_id!,
+          centroId: sharedCentroId!,
+          fecha: referenceCalendarDate,
+          entradaAt: jornadaEntrada ? new Date(jornadaEntrada).toISOString() : null,
+          salidaAt: jornadaSalida ? new Date(jornadaSalida).toISOString() : null,
+          prestacionIds: selectedRows.map((r) => r.id),
+        });
+        if (error) {
+          setJornadaError((error as any).message ?? 'No se pudo actualizar la jornada.');
+          return;
+        }
+        toast({
+          title: 'Jornada actualizada',
+          description: data?.prestacionesCompletadas
+            ? `${data.prestacionesCompletadas} prestación(es) del grupo quedaron completadas por esta jornada (se limpió su horario individual).`
+            : undefined,
+        });
+        setJornadaOpen(false);
+        setRowSelection({});
+        router.refresh();
+      } catch {
+        setJornadaError('No se pudo actualizar la jornada.');
+      } finally {
+        setJornadaSaving(false);
+      }
+    });
+  };
+
   const handleMassEditSave = () => {
     if (!selectedRows.length) return;
 
@@ -1265,7 +1477,8 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
           });
 
           if (!res.ok) {
-            throw new Error('Error al actualizar una de las prestaciones');
+            const json = await res.json().catch(() => ({}));
+            throw new Error(json?.error || 'Error al actualizar una de las prestaciones');
           }
         }
 
@@ -1278,9 +1491,9 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
         setMassEditOpen(false);
         setRowSelection({});
         router.refresh();
-      } catch (e) {
+      } catch (e: any) {
         setMassEditSaveError(
-          'No se pudieron guardar los cambios. Intentalo nuevamente.'
+          e?.message || 'No se pudieron guardar los cambios. Intentalo nuevamente.'
         );
       } finally {
         setMassEditSaving(false);
@@ -1940,7 +2153,7 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
           <Switch
             id="solo-alertas"
             checked={soloAlertas}
-            onCheckedChange={setSoloAlertas}
+            onCheckedChange={(checked) => updateQueryParams({ soloAlertas: Boolean(checked), page: 1 })}
           />
           <Label htmlFor="solo-alertas" className="text-sm cursor-pointer">
             Solo cerradas anticipadamente
@@ -2024,6 +2237,71 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
                     disabled={residenceScheduleSaving}
                   >
                     {residenceScheduleSaving ? 'Guardando…' : 'Actualizar horario'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </>
+        )}
+
+        {canEditJornadaCompleta && (
+          <>
+            <Button
+              variant="outline"
+              className="ml-2 bg-teal-50 text-teal-700 hover:bg-teal-100"
+              onClick={handleOpenJornada}
+            >
+              <CalendarClock className="mr-2 h-4 w-4" />
+              Editar jornada completa
+            </Button>
+            <Dialog open={jornadaOpen} onOpenChange={setJornadaOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Editar jornada de residencia</DialogTitle>
+                  <DialogDescription>
+                    Corrige la hora de entrada y salida de la jornada de {referenceRow?.prestador
+                      ? `${referenceRow.prestador.apellido ?? ''} ${referenceRow.prestador.nombre ?? ''}`.trim()
+                      : 'este AT'}
+                    {residenceName ? ` en ${residenceName}` : ''} para el {referenceCalendarDate}.
+                    Si cargás entrada y salida, todas las prestaciones seleccionadas de este grupo (pendientes o ya completadas individualmente) quedarán <b>completadas por esta jornada</b>: se les borra su propio inicio/fin individual para que no se cuenten horas duplicadas en un reporte individual (la ubicación de cierre se conserva como referencia). Las canceladas no se tocan.
+                  </DialogDescription>
+                </DialogHeader>
+                {jornadaLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Cargando jornada…
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <Label>Entrada</Label>
+                      <Input
+                        type="datetime-local"
+                        value={jornadaEntrada}
+                        onChange={(e) => setJornadaEntrada(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Salida</Label>
+                      <Input
+                        type="datetime-local"
+                        value={jornadaSalida}
+                        onChange={(e) => setJornadaSalida(e.target.value)}
+                      />
+                    </div>
+                    {jornadaError && (
+                      <p className="text-sm text-red-600">{jornadaError}</p>
+                    )}
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setJornadaOpen(false)}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={handleSaveJornada}
+                    disabled={jornadaSaving || jornadaLoading}
+                  >
+                    {jornadaSaving ? 'Guardando…' : 'Guardar jornada'}
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -2270,7 +2548,8 @@ export const PrestacionesTable = ({ data, filters, pagination, allPrestadores = 
               <DialogHeader>
                 <DialogTitle>Eliminar {selectedCount} prestaciones</DialogTitle>
                 <DialogDescription>
-                  Esta acción <b>eliminará permanentemente</b> las prestaciones seleccionadas (las completadas serán omitidas). ¿Deseás continuar?
+                  Esta acción <b>eliminará permanentemente</b> las prestaciones seleccionadas
+                  {isSuper ? '' : ' (las completadas serán omitidas, solo un super administrador puede eliminarlas)'}. ¿Deseás continuar?
                 </DialogDescription>
               </DialogHeader>
               {massDeleteError && <div className="text-red-600 text-sm">{massDeleteError}</div>}

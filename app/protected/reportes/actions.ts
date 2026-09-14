@@ -1,6 +1,14 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
+
+function getAdminSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) return null as any;
+  return createAdminClient(url, serviceKey);
+}
 
 export type PrestadorResumen = {
   id: string;
@@ -121,7 +129,9 @@ export async function getPrestadores() {
     return [];
   }
 
-  return data || [];
+  return (data || []).filter(
+    (p: any) => p.nombre?.trim() && p.apellido?.trim()
+  );
 }
 
 export async function getPacientesDePrestador(prestadorId: string) {
@@ -190,14 +200,16 @@ export async function getPrestadoresDeBeneficiario(beneficiarioId: string) {
     return [] as PrestadorResumen[];
   }
 
-  return (prestadores || []).map((p) => ({
-    id: p.id,
-    nombre: p.nombre,
-    apellido: p.apellido,
-    documento: p.documento ?? null,
-    email: (p as any).email ?? null,
-    telefono: (p as any).telefono ?? null,
-  })) satisfies PrestadorResumen[];
+  return (prestadores || [])
+    .filter((p: any) => p.nombre?.trim() && p.apellido?.trim())
+    .map((p) => ({
+      id: p.id,
+      nombre: p.nombre,
+      apellido: p.apellido,
+      documento: p.documento ?? null,
+      email: (p as any).email ?? null,
+      telefono: (p as any).telefono ?? null,
+    })) satisfies PrestadorResumen[];
 }
 
 export async function getTiposPrestacionDeBeneficiario(beneficiarioId: string, prestadorIds?: string[]) {
@@ -361,6 +373,8 @@ export async function getCentros(): Promise<CentroResumen[]> {
 export type DiaResidencia = {
   fecha: string;
   minutos: number;
+  entrada_at: string | null;
+  salida_at: string | null;
 };
 
 export type PacienteResidencia = {
@@ -386,6 +400,17 @@ export async function getReporteResidencia(
 ) {
   const supabase = await createClient();
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const isAdmin = user?.user_metadata?.tipo_usuario === 'incluir salud';
+  const jornadasClient = isAdmin ? getAdminSupabase() : supabase;
+
+  if (!isAdmin && user?.id !== prestadorId) {
+    return { data: null, error: { message: 'No autorizado' } };
+  }
+
   const { data: centro, error: centroError } = await supabase
     .from('centros')
     .select('id, nombre')
@@ -408,7 +433,7 @@ export async function getReporteResidencia(
     return { data: null, error: prestadorError };
   }
 
-  const { data: jornadas, error: jornadasError } = await supabase
+  const { data: jornadas, error: jornadasError } = await jornadasClient
     .from('jornadas_residencia')
     .select('fecha, entrada_at, salida_at')
     .eq('centro_id', centroId)
@@ -423,26 +448,32 @@ export async function getReporteResidencia(
     return { data: null, error: jornadasError };
   }
 
-  const diasMap = new Map<string, number>();
+  const diasDetalleMap = new Map<string, { minutos: number; entrada_at: string | null; salida_at: string | null }>();
   let totalMinutos = 0;
   for (const j of (jornadas || []) as any[]) {
     if (j.entrada_at && j.salida_at) {
-      const minutos = Math.round(
+      const minutos = Math.floor(
         (new Date(j.salida_at).getTime() - new Date(j.entrada_at).getTime()) / (1000 * 60)
       );
       const fechaKey = j.fecha as string;
-      diasMap.set(fechaKey, (diasMap.get(fechaKey) || 0) + minutos);
+      const prev = diasDetalleMap.get(fechaKey) ?? { minutos: 0, entrada_at: null, salida_at: null };
+      const entradaMs = new Date(j.entrada_at as string).getTime();
+      const salidaMs = new Date(j.salida_at as string).getTime();
+      if (!prev.entrada_at || entradaMs < new Date(prev.entrada_at).getTime()) {
+        prev.entrada_at = j.entrada_at as string;
+      }
+      if (!prev.salida_at || salidaMs > new Date(prev.salida_at).getTime()) {
+        prev.salida_at = j.salida_at as string;
+      }
+      prev.minutos += minutos;
+      diasDetalleMap.set(fechaKey, prev);
       totalMinutos += minutos;
     }
   }
 
-  const dias = Array.from(diasMap.entries())
-    .map(([fecha, minutos]) => ({ fecha, minutos }))
-    .sort((a, b) => a.fecha.localeCompare(b.fecha));
-
   const { data: prestaciones, error: prestacionesError } = await supabase
     .from('prestaciones')
-    .select('paciente_id, pacientes(id, nombre, apellido, documento)')
+    .select('fecha, paciente_id, pacientes(id, nombre, apellido, documento)')
     .eq('centro_id', centroId)
     .eq('user_id', prestadorId)
     .eq('estado', 'completada')
@@ -456,8 +487,11 @@ export async function getReporteResidencia(
   }
 
   const pacientesMap = new Map<string, PacienteResidencia>();
+  const prestacionesFechas = new Set<string>();
   for (const p of (prestaciones || []) as any[]) {
     const pac = p.pacientes;
+    const fechaKey = p.fecha ? (p.fecha as string).slice(0, 10) : null;
+    if (fechaKey) prestacionesFechas.add(fechaKey);
     if (pac && !pacientesMap.has(pac.id)) {
       pacientesMap.set(pac.id, {
         id: pac.id,
@@ -467,6 +501,15 @@ export async function getReporteResidencia(
       });
     }
   }
+
+  const dias: DiaResidencia[] = Array.from(diasDetalleMap.entries())
+    .map(([fecha, detalle]) => ({ fecha, ...detalle }))
+    .concat(
+      Array.from(prestacionesFechas)
+        .filter((fecha) => !diasDetalleMap.has(fecha))
+        .map((fecha) => ({ fecha, minutos: 0, entrada_at: null, salida_at: null }))
+    )
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
 
   const pacientes = Array.from(pacientesMap.values()).sort((a, b) => {
     const cmp = a.apellido.localeCompare(b.apellido);

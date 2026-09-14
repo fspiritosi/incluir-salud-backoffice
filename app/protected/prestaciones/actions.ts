@@ -17,6 +17,8 @@ export type PrestacionInput = {
   user_id: string; // selected provider user id (FK -> auth.users.id)
   centro_id?: string | null;
   sentido_transporte?: 'ida' | 'vuelta' | 'ida_y_vuelta' | null;
+  started_at?: string | null;
+  completed_at?: string | null;
 };
 
 function getAdminSupabase() {
@@ -24,6 +26,16 @@ function getAdminSupabase() {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) return null as any;
   return createAdminClient(url, serviceKey);
+}
+
+async function isCurrentUserSuperAdmin(supabase: Awaited<ReturnType<typeof createClient>>): Promise<boolean> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+  const { data: roleRows } = await supabase
+    .from('v_user_roles')
+    .select('role')
+    .eq('user_id', user.id);
+  return (roleRows || []).some((r: any) => r.role === 'super_admin');
 }
 
 // Helper para extraer solo la fecha (YYYY-MM-DD) de un ISO string
@@ -569,12 +581,26 @@ export async function updatePrestacionesHorarioResidencia(params: UpdateResidenc
   return { data: { updated: rows.length, from: fromIso, to: toIso }, error: null } as const;
 }
 
+function esCerradaAnticipadamenteAction(p: any) {
+  if (p.estado?.toLowerCase() !== "completada") return false;
+  if (!p.started_at || !p.completed_at) return false;
+  const inicio = new Date(p.started_at).getTime();
+  const fin = new Date(p.completed_at).getTime();
+  if (isNaN(inicio) || isNaN(fin) || fin < inicio) return false;
+  const duracionMin = Math.floor((fin - inicio) / (1000 * 60));
+  const tipo = (p.tipo_prestacion || "").toLowerCase();
+  if (tipo.includes("kine")) return duracionMin < 30;
+  if (tipo.includes("acompañante") || tipo.includes("acomp")) return duracionMin < 40;
+  return false;
+}
+
 type ListPrestacionesParams = {
   fechaDesde?: string;
   fechaHasta?: string;
   pacienteIds?: string[];
   prestadorIds?: string[];
   estados?: string[];
+  soloAlertas?: boolean;
   page?: number;
   pageSize?: number;
 };
@@ -617,6 +643,9 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
 
   const applyFilters = (q: any) => {
     q = q.neq("tipo_prestacion", "Transporte");
+    if (params.soloAlertas) {
+      q = q.eq("estado", "completada").not("started_at", "is", null).not("completed_at", "is", null);
+    }
     if (filters.fechaDesde) {
       const parsed = parseDateInput(filters.fechaDesde);
       if (parsed) q = q.gte("fecha", startOfDayIso(parsed));
@@ -631,34 +660,53 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
     if (filters.prestadorIds.length > 0) {
       q = q.in("user_id", filters.prestadorIds);
     }
-    if (filters.estados.length > 0) {
+    if (filters.estados.length > 0 && !params.soloAlertas) {
       q = q.in("estado", filters.estados);
     }
     return q;
   };
 
-  const countQuery = applyFilters(
-    supabase.from("prestaciones").select("*", { count: "exact", head: true })
-  );
+  let total = 0;
+  let rawPrestaciones: any[] | null = null;
+  let error: any = null;
 
-  const dataQuery = applyFilters(
-    supabase.from("prestaciones")
-      .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico, sentido_transporte, completed_at, started_at, completado_por, centro_id, ubicacion_cierre, distancia_validacion, notas")
-      .order("fecha", { ascending: false })
-  ).range(offset, offset + pageSize - 1);
+  if (params.soloAlertas) {
+    const { data: all, error: e } = await applyFilters(
+      supabase.from("prestaciones")
+        .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico, sentido_transporte, completed_at, started_at, completado_por, centro_id, ubicacion_cierre, distancia_validacion, notas")
+        .order("fecha", { ascending: false })
+    );
+    error = e;
+    if (!error && all) {
+      const filtradas = (all as any[]).filter(esCerradaAnticipadamenteAction);
+      total = filtradas.length;
+      rawPrestaciones = filtradas.slice(offset, offset + pageSize);
+    }
+  } else {
+    const countQuery = applyFilters(
+      supabase.from("prestaciones").select("*", { count: "exact", head: true })
+    );
+    const dataQuery = applyFilters(
+      supabase.from("prestaciones")
+        .select("id, tipo_prestacion, fecha, estado, monto, user_id, paciente_id, cronico, sentido_transporte, completed_at, started_at, completado_por, centro_id, ubicacion_cierre, distancia_validacion, notas")
+        .order("fecha", { ascending: false })
+    ).range(offset, offset + pageSize - 1);
 
-  const [{ count }, { data: rawPrestaciones, error }] = await Promise.all([
-    countQuery,
-    dataQuery,
-  ]);
+    const [{ count }, { data, error: e }] = await Promise.all([
+      countQuery,
+      dataQuery,
+    ]);
+    total = count ?? 0;
+    rawPrestaciones = data as any[] | null;
+    error = e;
+  }
+
   const prestaciones = rawPrestaciones as Array<{ id: string; tipo_prestacion: string; fecha: string; estado: string | null; monto: number | null; user_id: string | null; paciente_id: string | null; cronico: boolean | null; sentido_transporte: string | null; completed_at: string | null; started_at: string | null; completado_por: string | null; centro_id: string | null; ubicacion_cierre: any | null; distancia_validacion: number | null; notas: string | null; }> | null;
 
   if (error) {
     console.error("Error listando prestaciones:", error);
     return { data: null as any, error, pagination: { page, pageSize, total: 0 } };
   }
-
-  const total = count ?? 0;
 
   if (!prestaciones || prestaciones.length === 0) {
     return { data: [] as any[], error: null, pagination: { page, pageSize, total } };
@@ -766,7 +814,7 @@ export async function listPrestaciones(params: ListPrestacionesParams = {}) {
     pagination: {
       page,
       pageSize,
-      total: count ?? 0,
+      total,
     },
   };
 }
@@ -929,9 +977,26 @@ export async function updatePrestacion(id: string, values: Partial<PrestacionInp
 
   const { data: { user } } = await supabase.auth.getUser();
 
+  const hasHorarioOverride =
+    Object.prototype.hasOwnProperty.call(values, "started_at") ||
+    Object.prototype.hasOwnProperty.call(values, "completed_at");
+
+  if (existing?.estado === 'completada' || hasHorarioOverride) {
+    const isSuper = await isCurrentUserSuperAdmin(supabase);
+    if (!isSuper) {
+      return {
+        data: null,
+        error: { message: 'Solo un super administrador puede editar una prestación completada o sus horarios de inicio/fin.' },
+      };
+    }
+  }
+
   let completedAtUpdate: string | null | undefined;
   let completadoPorUpdate: string | null | undefined;
-  if (values.estado === 'completada') {
+  if (Object.prototype.hasOwnProperty.call(values, "completed_at")) {
+    completedAtUpdate = values.completed_at ?? null;
+    completadoPorUpdate = existing?.completado_por ?? user?.id ?? null;
+  } else if (values.estado === 'completada') {
     completedAtUpdate = existing?.estado === 'completada'
       ? existing?.completed_at ?? null
       : new Date().toISOString();
@@ -967,6 +1032,7 @@ export async function updatePrestacion(id: string, values: Partial<PrestacionInp
   assign("user_id");
   assign("centro_id", (v) => v ?? null);
   assign("sentido_transporte", (v) => v ?? null);
+  assign("started_at", (v) => v ?? null);
 
   if (completedAtUpdate !== undefined) {
     payload.completed_at = completedAtUpdate;
@@ -1531,7 +1597,10 @@ export async function listPrestadoresDePrestaciones() {
 export async function deletePrestacion(id: string) {
   const supabase = await createClient();
   const { data: ex } = await supabase.from('prestaciones').select('estado').eq('id', id).single();
-  if (ex?.estado === 'completada') return { error: { message: 'No se puede eliminar una prestación completada' } };
+  if (ex?.estado === 'completada') {
+    const isSuper = await isCurrentUserSuperAdmin(supabase);
+    if (!isSuper) return { error: { message: 'Solo un super administrador puede eliminar una prestación completada' } };
+  }
   const { error } = await supabase.from('prestaciones').delete().eq('id', id);
   if (!error) revalidatePath('/protected/prestaciones');
   return { error };
@@ -1552,12 +1621,125 @@ export async function completePrestacionesBulk(ids: string[]) {
 
 export async function deletePrestacionesBulk(ids: string[]) {
   const supabase = await createClient();
+  const isSuper = await isCurrentUserSuperAdmin(supabase);
   const { data: rows } = await supabase.from('prestaciones').select('id, estado').in('id', ids);
-  const deletable = (rows || []).filter((r: any) => r.estado !== 'completada').map((r: any) => r.id);
+  const deletable = (rows || [])
+    .filter((r: any) => r.estado !== 'completada' || isSuper)
+    .map((r: any) => r.id);
   if (!deletable.length) return { deleted: 0, skipped: ids.length };
   const { error } = await supabase.from('prestaciones').delete().in('id', deletable);
   if (!error) revalidatePath('/protected/prestaciones');
   return { deleted: deletable.length, skipped: ids.length - deletable.length, error };
+}
+
+type UpsertJornadaResidenciaInput = {
+  userId: string;
+  centroId: string;
+  fecha: string; // YYYY-MM-DD
+  entradaAt: string | null; // ISO string
+  salidaAt: string | null; // ISO string
+  prestacionIds?: string[]; // prestaciones seleccionadas que pertenecen a esta jornada
+};
+
+export async function getJornadaResidenciaHorario(userId: string, centroId: string, fecha: string) {
+  const supabase = await createClient();
+  const isSuper = await isCurrentUserSuperAdmin(supabase);
+  if (!isSuper) {
+    return { data: null, error: { message: 'Solo un super administrador puede ver esta información.' } };
+  }
+  const { data, error } = await supabase
+    .from('jornadas_residencia')
+    .select('id, entrada_at, salida_at')
+    .eq('user_id', userId)
+    .eq('centro_id', centroId)
+    .eq('fecha', fecha);
+  if (error) return { data: null, error };
+  if ((data?.length || 0) > 1) {
+    return { data: null, error: { message: 'Hay más de una jornada para ese AT, residencia y día.' } };
+  }
+  return { data: data?.[0] ?? null, error: null };
+}
+
+export async function upsertJornadaResidenciaHorario(params: UpsertJornadaResidenciaInput) {
+  const supabase = await createClient();
+  const isSuper = await isCurrentUserSuperAdmin(supabase);
+  if (!isSuper) {
+    return { data: null, error: { message: 'Solo un super administrador puede editar la jornada de residencia.' } };
+  }
+
+  if (!params.userId || !params.centroId || !params.fecha) {
+    return { data: null, error: { message: 'Faltan datos para editar la jornada.' } };
+  }
+
+  const { data: existing, error: fetchError } = await supabase
+    .from('jornadas_residencia')
+    .select('id')
+    .eq('user_id', params.userId)
+    .eq('centro_id', params.centroId)
+    .eq('fecha', params.fecha);
+
+  if (fetchError) {
+    return { data: null, error: fetchError };
+  }
+
+  if ((existing?.length || 0) > 1) {
+    return { data: null, error: { message: 'Hay más de una jornada para ese AT, residencia y día. Resolvé la duplicidad antes de editar.' } };
+  }
+
+  const estado = params.salidaAt ? 'completada' : 'iniciada';
+
+  if (existing && existing.length === 1) {
+    const { error } = await supabase
+      .from('jornadas_residencia')
+      .update({ entrada_at: params.entradaAt, salida_at: params.salidaAt, estado })
+      .eq('id', existing[0].id);
+    if (error) return { data: null, error };
+  } else {
+    const { error } = await supabase
+      .from('jornadas_residencia')
+      .insert({
+        user_id: params.userId,
+        centro_id: params.centroId,
+        fecha: params.fecha,
+        entrada_at: params.entradaAt,
+        salida_at: params.salidaAt,
+        estado,
+      });
+    if (error) return { data: null, error };
+  }
+
+  let completadas = 0;
+  if (estado === 'completada' && params.prestacionIds?.length) {
+    // La jornada absorbe la validación de todas las prestaciones del grupo
+    // (pendientes y las que ya estaban completadas individualmente), dejándolas
+    // como completada por jornada. Se guarda completed_at con la hora real de
+    // finalización de la jornada (solo para referencia/visualización), pero se
+    // deja started_at en null: los reportes individuales calculan minutos solo
+    // cuando ambos campos existen, así que esta prestación queda excluida del
+    // conteo de horas individual (esas horas ya se contabilizan en el reporte
+    // de residencia vía jornadas_residencia). La ubicación de cierre se
+    // conserva como referencia histórica. Las canceladas no se tocan.
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: updatedRows, error: prestacionesError } = await supabase
+      .from('prestaciones')
+      .update({
+        estado: 'completada',
+        started_at: null,
+        completed_at: params.salidaAt,
+        completado_por: user?.id ?? null,
+      })
+      .in('id', params.prestacionIds)
+      .neq('estado', 'cancelada')
+      .select('id');
+    if (prestacionesError) {
+      return { data: null, error: prestacionesError };
+    }
+    completadas = updatedRows?.length ?? 0;
+  }
+
+  revalidatePath('/protected/prestaciones');
+  revalidatePath('/protected/reportes');
+  return { data: { success: true, prestacionesCompletadas: completadas }, error: null };
 }
 
 export async function programarPrestacionesCronicasManual() {
