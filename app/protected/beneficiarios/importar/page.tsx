@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, FormEvent, useEffect, useRef } from "react";
+import { useState, FormEvent, useRef } from "react";
 import Link from "next/link";
 import { ArrowLeft, FileWarning, Upload } from "lucide-react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,6 +39,49 @@ interface RowError {
   message: string;
 }
 
+type StageKey =
+  | "subiendo"
+  | "consultando_existentes"
+  | "geocodificando"
+  | "guardando"
+  | "procesando_bajas_pacientes"
+  | "procesando_bajas_prestaciones"
+  | "finalizando"
+  | "done";
+
+const STAGE_LABELS: Record<StageKey, string> = {
+  subiendo: "Subiendo y validando archivo...",
+  consultando_existentes: "Consultando pacientes existentes...",
+  geocodificando: "Geolocalizando direcciones...",
+  guardando: "Guardando resultados...",
+  procesando_bajas_pacientes: "Procesando bajas...",
+  procesando_bajas_prestaciones: "Cancelando prestaciones de bajas...",
+  finalizando: "Finalizando...",
+  done: "Importación completada",
+};
+
+// Rango de porcentaje que ocupa cada etapa dentro del progreso total.
+// La geocodificación suele ser la más lenta (llamadas a Mapbox una por una).
+const STAGE_RANGES: Record<StageKey, { start: number; end: number }> = {
+  subiendo: { start: 0, end: 5 },
+  consultando_existentes: { start: 5, end: 15 },
+  geocodificando: { start: 15, end: 80 },
+  guardando: { start: 80, end: 92 },
+  procesando_bajas_pacientes: { start: 92, end: 96 },
+  procesando_bajas_prestaciones: { start: 96, end: 99 },
+  finalizando: { start: 99, end: 100 },
+  done: { start: 100, end: 100 },
+};
+
+const formatEta = (ms: number) => {
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+};
+
 export default function ImportarBeneficiariosPage() {
   const { toast } = useToast();
   const [file, setFile] = useState<File | null>(null);
@@ -49,44 +92,8 @@ export default function ImportarBeneficiariosPage() {
   const [executedBy, setExecutedBy] = useState<ExecutedByInfo | null>(null);
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
-  const progressTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const progressStages = [
-    { value: 5, label: "Subiendo archivo..." },
-    { value: 25, label: "Validando columnas..." },
-    { value: 45, label: "Procesando pacientes..." },
-    { value: 70, label: "Geolocalizando direcciones..." },
-    { value: 90, label: "Guardando resultados..." },
-  ];
-
-  const stopProgress = () => {
-    if (progressTimerRef.current) {
-      clearInterval(progressTimerRef.current);
-      progressTimerRef.current = null;
-    }
-  };
-
-  const startProgress = () => {
-    setProgress(5);
-    setProgressMessage(progressStages[0].label);
-    stopProgress();
-    progressTimerRef.current = setInterval(() => {
-      setProgress((prev) => {
-        const next = Math.min(prev + Math.random() * 6 + 1, 92);
-        const stage = [...progressStages]
-          .reverse()
-          .find((stage) => next >= stage.value);
-        if (stage) {
-          setProgressMessage(stage.label);
-        }
-        return next;
-      });
-    }, 1500);
-  };
-
-  useEffect(() => {
-    return () => stopProgress();
-  }, []);
+  const [etaLabel, setEtaLabel] = useState<string | null>(null);
+  const requestStartedAtRef = useRef<number | null>(null);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] ?? null;
@@ -112,56 +119,114 @@ export default function ImportarBeneficiariosPage() {
     setRowErrors([]);
     setServerError(null);
     setExecutedBy(null);
-    setProgress(0);
-    setProgressMessage(null);
+    setProgress(1);
+    setProgressMessage(STAGE_LABELS.subiendo);
+    setEtaLabel(null);
+    requestStartedAtRef.current = Date.now();
 
     const formData = new FormData();
     formData.append("file", file);
 
-    startProgress();
+    const applyProgressEvent = (stage: StageKey, processed: number, total: number) => {
+      const range = STAGE_RANGES[stage];
+      const fraction = total > 0 ? Math.min(processed / total, 1) : processed > 0 ? 1 : 0;
+      const overall = range.start + fraction * (range.end - range.start);
+      setProgress(overall);
+      setProgressMessage(STAGE_LABELS[stage]);
+
+      const startedAt = requestStartedAtRef.current;
+      if (startedAt && overall > 2) {
+        const elapsed = Date.now() - startedAt;
+        const etaMs = (elapsed / overall) * (100 - overall);
+        setEtaLabel(formatEta(etaMs));
+      }
+    };
+
     try {
-      const response = await fetch("/api/pacientes/import", {
+      const startResponse = await fetch("/api/pacientes/import/start", {
         method: "POST",
         body: formData,
       });
-      const payload = await response.json();
+      const startPayload = await startResponse.json().catch(() => null);
 
-      if (!response.ok) {
-        setServerError(payload?.error || "No se pudo procesar el archivo");
-        setRowErrors(payload?.details?.errors ?? payload?.errors ?? []);
+      if (!startResponse.ok) {
+        setServerError(startPayload?.error || "No se pudo procesar el archivo");
+        setRowErrors(startPayload?.details?.errors ?? startPayload?.errors ?? []);
         setExecutedBy(null);
         setProgressMessage("La importación falló");
-        stopProgress();
+        setEtaLabel(null);
         toast({
           title: "Importación fallida",
-          description: payload?.error || "Revisá los detalles y volvé a intentar",
+          description: startPayload?.error || "Revisá los detalles y volvé a intentar",
           variant: "destructive",
         });
         return;
       }
 
-      setSummary(payload.summary);
-      setRowErrors(payload.errors || []);
-      setExecutedBy(payload.executedBy ?? null);
-      setProgress(100);
-      setProgressMessage("Importación completada");
-      stopProgress();
-      toast({
-        title: "Importación completada",
-        description: `Procesadas ${payload.summary?.processed ?? 0} filas`,
-      });
+      const jobId: string = startPayload.jobId;
+      let done = false;
+
+      while (!done) {
+        const stepResponse = await fetch("/api/pacientes/import/step", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId }),
+        });
+        const event = await stepResponse.json().catch(() => null);
+
+        if (!stepResponse.ok || !event) {
+          setServerError(event?.error || "Error inesperado importando pacientes");
+          setProgressMessage("La importación falló");
+          setEtaLabel(null);
+          toast({
+            title: "Importación fallida",
+            description: event?.error || "Revisá los detalles y volvé a intentar",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        if (event.stage === "error") {
+          setServerError(event.error || "Error inesperado importando pacientes");
+          setProgressMessage("La importación falló");
+          setEtaLabel(null);
+          toast({
+            title: "Importación fallida",
+            description: event.error || "Revisá los detalles y volvé a intentar",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        if (event.stage) {
+          applyProgressEvent(event.stage as StageKey, event.processed ?? 0, event.total ?? 0);
+        }
+
+        if (event.done) {
+          done = true;
+          setSummary(event.summary ?? null);
+          setRowErrors(event.errors || []);
+          setExecutedBy(event.executedBy ?? null);
+          setProgress(100);
+          setProgressMessage("Importación completada");
+          setEtaLabel(null);
+          toast({
+            title: "Importación completada",
+            description: `Procesadas ${event.summary?.processed ?? 0} filas`,
+          });
+        }
+      }
     } catch (error) {
       console.error("Error al enviar importación", error);
       setServerError("Error inesperado importando pacientes");
       setProgressMessage("Error inesperado importando pacientes");
-      stopProgress();
+      setEtaLabel(null);
       toast({
         title: "Error del servidor",
         description: "Intentalo de nuevo en unos minutos",
         variant: "destructive",
       });
     } finally {
-      stopProgress();
       setIsSubmitting(false);
     }
   };
@@ -188,7 +253,10 @@ export default function ImportarBeneficiariosPage() {
               <div className="mb-4 space-y-1">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>{progressMessage}</span>
-                  <span>{Math.round(progress)}%</span>
+                  <span>
+                    {Math.round(progress)}%
+                    {etaLabel ? ` · faltan ~${etaLabel}` : ""}
+                  </span>
                 </div>
                 <div className="h-2 rounded-full bg-muted">
                   <div
