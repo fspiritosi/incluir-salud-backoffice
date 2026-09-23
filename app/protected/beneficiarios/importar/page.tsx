@@ -17,6 +17,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/components/ui/use-toast";
+import { createClient } from "@/lib/supabase/client";
+
+// Límite de body en requests a la API (Vercel Functions: ~4.5 MB). Por encima de
+// esto, el archivo se sube directo a Supabase Storage y a la API solo se le pasa
+// la ruta, evitando el límite.
+const INLINE_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
 
 interface ImportSummary {
   processed: number;
@@ -124,9 +130,6 @@ export default function ImportarBeneficiariosPage() {
     setEtaLabel(null);
     requestStartedAtRef.current = Date.now();
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     const applyProgressEvent = (stage: StageKey, processed: number, total: number) => {
       const range = STAGE_RANGES[stage];
       const fraction = total > 0 ? Math.min(processed / total, 1) : processed > 0 ? 1 : 0;
@@ -143,10 +146,50 @@ export default function ImportarBeneficiariosPage() {
     };
 
     try {
-      const startResponse = await fetch("/api/pacientes/import/start", {
-        method: "POST",
-        body: formData,
-      });
+      let startResponse: Response;
+
+      if (file.size > INLINE_UPLOAD_MAX_BYTES) {
+        // Archivo grande: subir directo a Supabase Storage (esquiva el límite
+        // de tamaño de body de las funciones de Vercel) y pasarle a la API
+        // solo la ruta del archivo ya subido.
+        setProgressMessage("Subiendo archivo...");
+        const supabase = createClient();
+        const { data: userRes, error: userError } = await supabase.auth.getUser();
+        if (userError || !userRes?.user) {
+          throw new Error("No se pudo verificar tu sesión para subir el archivo");
+        }
+
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const filePath = `${userRes.user.id}/${Date.now()}-${safeName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("importaciones")
+          .upload(filePath, file, { contentType: file.type || undefined });
+
+        if (uploadError) {
+          throw new Error(`No se pudo subir el archivo: ${uploadError.message}`);
+        }
+
+        setProgress(3);
+        setProgressMessage(STAGE_LABELS.subiendo);
+
+        startResponse = await fetch("/api/pacientes/import/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filePath }),
+        });
+
+        // Limpieza best-effort del archivo subido; no bloquea la importación si falla.
+        supabase.storage.from("importaciones").remove([filePath]).catch(() => {});
+      } else {
+        const formData = new FormData();
+        formData.append("file", file);
+        startResponse = await fetch("/api/pacientes/import/start", {
+          method: "POST",
+          body: formData,
+        });
+      }
+
       const startPayload = await startResponse.json().catch(() => null);
 
       if (!startResponse.ok) {
