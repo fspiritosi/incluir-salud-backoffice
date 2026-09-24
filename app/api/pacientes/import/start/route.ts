@@ -7,10 +7,13 @@ import {
   buildLookups,
   CandidateRow,
   collectBajaDocumentos,
+  getServiceRoleClient,
   mapRowToBeneficiario,
   RowError,
   validateHeaders,
 } from "../_lib";
+
+const IMPORT_BUCKET = "importaciones";
 
 export const maxDuration = 60;
 
@@ -35,13 +38,53 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No autorizado" }, { status: 403 });
     }
 
-    const formData = await req.formData();
-    const file = formData.get("file");
-    if (!file || !(file instanceof Blob)) {
-      return NextResponse.json({ error: "Archivo no provisto" }, { status: 400 });
+    const contentType = req.headers.get("content-type") || "";
+    let arrayBuffer: ArrayBuffer;
+
+    if (contentType.includes("application/json")) {
+      // Archivo grande: ya se subió a Supabase Storage desde el cliente;
+      // acá solo recibimos la ruta y lo descargamos con el service role.
+      const body = await req.json().catch(() => null);
+      const filePath = body?.filePath;
+      if (!filePath || typeof filePath !== "string") {
+        return NextResponse.json({ error: "Ruta de archivo no provista" }, { status: 400 });
+      }
+      // El path debe empezar con el id del usuario autenticado (mismo prefijo
+      // que usa el cliente al subir) para que nadie pueda pedir el archivo de otro.
+      if (!filePath.startsWith(`${userRes.user.id}/`)) {
+        return NextResponse.json({ error: "Ruta de archivo no autorizada" }, { status: 403 });
+      }
+
+      const adminClient = getServiceRoleClient();
+      if (!adminClient) {
+        return NextResponse.json(
+          { error: "Backend sin credenciales de servicio para importar" },
+          { status: 500 },
+        );
+      }
+
+      const { data: fileData, error: downloadError } = await adminClient.storage
+        .from(IMPORT_BUCKET)
+        .download(filePath);
+      if (downloadError || !fileData) {
+        return NextResponse.json(
+          { error: `No se pudo descargar el archivo subido: ${downloadError?.message || "desconocido"}` },
+          { status: 400 },
+        );
+      }
+      arrayBuffer = await fileData.arrayBuffer();
+
+      // Limpieza best-effort: ya tenemos los bytes en memoria, no necesitamos conservarlo.
+      adminClient.storage.from(IMPORT_BUCKET).remove([filePath]).catch(() => {});
+    } else {
+      const formData = await req.formData();
+      const file = formData.get("file");
+      if (!file || !(file instanceof Blob)) {
+        return NextResponse.json({ error: "Archivo no provisto" }, { status: 400 });
+      }
+      arrayBuffer = await file.arrayBuffer();
     }
 
-    const arrayBuffer = await file.arrayBuffer();
     const workbook = XLSX.read(arrayBuffer, { type: "array" });
     const sheet = workbook.Sheets.PROFE;
     if (!sheet) {
