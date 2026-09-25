@@ -6,6 +6,7 @@ import {
   buildAddressSignature,
   buildLookups,
   CandidateRow,
+  chunkArray,
   collectBajaDocumentos,
   getServiceRoleClient,
   mapRowToBeneficiario,
@@ -151,14 +152,22 @@ export async function POST(req: Request) {
       );
     }
 
+    // Padrones grandes (decenas de miles de filas) generan un JSON de candidatos
+    // que puede superar el límite de tamaño de request de la API de Supabase si
+    // se manda todo en un solo insert. Por eso se crea el job con el primer chunk
+    // y el resto se agrega con RPCs que hacen el append en el servidor (jsonb ||).
+    const JOB_CHUNK_SIZE = 1500;
+    const candidateChunks = chunkArray(candidates, JOB_CHUNK_SIZE);
+    const errorChunks = chunkArray(errors, JOB_CHUNK_SIZE);
+
     const { data: job, error: insertError } = await supabase
       .from("import_jobs")
       .insert({
         created_by: userRes.user.id,
         status: "processing",
         stage: "consultando_existentes",
-        candidates,
-        errors,
+        candidates: candidateChunks[0] ?? [],
+        errors: errorChunks[0] ?? [],
         bajas_documentos: bajasDocumentos,
       })
       .select("id")
@@ -170,6 +179,31 @@ export async function POST(req: Request) {
         { error: "No se pudo crear el trabajo de importación" },
         { status: 500 },
       );
+    }
+
+    for (let i = 1; i < candidateChunks.length; i++) {
+      const { error: appendError } = await supabase.rpc("append_import_job_candidates", {
+        p_job_id: job.id,
+        p_chunk: candidateChunks[i],
+      });
+      if (appendError) {
+        console.error("Error agregando candidatos al job", appendError);
+        return NextResponse.json(
+          { error: "No se pudo guardar el padrón completo (archivo muy grande)" },
+          { status: 500 },
+        );
+      }
+    }
+
+    for (let i = 1; i < errorChunks.length; i++) {
+      const { error: appendError } = await supabase.rpc("append_import_job_errors", {
+        p_job_id: job.id,
+        p_chunk: errorChunks[i],
+      });
+      if (appendError) {
+        // No bloqueante: los errores son solo informativos para el usuario.
+        console.error("Error agregando errores al job", appendError);
+      }
     }
 
     return NextResponse.json({
